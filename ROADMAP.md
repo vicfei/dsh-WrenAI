@@ -1,26 +1,50 @@
 # ROADMAP — dsh-WrenAI
 
-北极星：家族的语义层位，吃 WrenAI 18.3k★ 流量。命名全表面：GitHub=dsh-WrenAI
-（镜像 CamelCase）/npm=dsh-wrenai。定位（调研实证）：DSH 有裸 NL2SQL 占位，
-**自托管语义层无人做**——本仓取该空位，口径随行为产品灵魂。
+North star: the family's semantic-layer seat, riding WrenAI's 18.3k★ gravity.
+Naming on all surfaces: GitHub = dsh-WrenAI (mirror CamelCase) / npm = dsh-wrenai.
+Positioning (research-verified): DSH has raw NL2SQL seats, **nobody ships a
+self-hosted semantic layer** — this repo takes that gap, and "calibers ride with
+results" is the product soul.
 
-## 里程碑
-### M0 ✅（2026-11-17）
-语义模型（维度/度量/指标+口径 YAML）+ SQLite 语义视图（指标窗口预计算）+
-问数引擎（LLM 见目录产单条 SELECT，护栏+自愈重试，口径随结果输出）。
-真实冒烟：BTC 365d 问数（30d 均价/年化波动+口径公式），SQL 语法错自愈一例。
+## Milestones
 
-### M0.5 · 发布包
-- [ ] README 打磨 + 问数截图（含口径段）+ npm 0.0.1 占位（owner 手动）
-- [ ] 公开仓 topics + 家族互链 + marketplace + 渠道
+### M0 ✅ (2026-11-17)
+Semantic model (dimensions/measures/metrics + calibers in YAML) + SQLite semantic
+view (metric windows precomputed) + ask engine (LLM sees the catalog, emits a
+single SELECT; guard + self-heal retry; calibers ride with the result).
+Live smoke: BTC 365d ask (30d avg close / annualized vol + caliber formulas),
+one SQL syntax error self-healed on error feedback.
 
-### M1 · 治理深度（第 2-3 周）
-- [ ] joins/多表模型 + 指标版本化 + 口径漂移告警（同一问法跨版本对比）
-- [ ] 结果缓存与查询审计日志（问过什么、用过哪个口径版本）
+### M0.5 · Release packaging — partially done
+- [x] README polish + npm 0.0.1 placeholder (owner-published)
+- [ ] ask screenshots (with the calibers section) + marketplace + channels
 
-### M2 · 兼容与多库（第 4-6 周）
-- [ ] MDL 风格模型文件兼容层（WrenAI 生态模型可直接导入）
-- [ ] DuckDB/Postgres 执行后端 + cordis 插件 typed tools
+### W1 · PostgreSQL backend + WeKnora ops bridge (in flight, 2026-11-18)
+WrenAI connects directly to WeKnora's PostgreSQL: ops ask natural-language
+questions about WeKnora's own operational data ("how many times was the test KB
+queried in the past week?"). WeKnora lacks self-observability; WrenAI lacked a
+real data source — each solves the other's pain.
+- [x] W1.1 EN-first conversion with `--lang zh` fallback (family rule)
+- [ ] W1.2 PostgreSQL execution backend — pluggable executor behind the same
+      single-SELECT guard; zero-dependency pure-stdlib PG wire client
+      (SCRAM-SHA-256 auth); `--pg "postgresql://…"` DSN
+- [ ] W1.3 `--weknora` preset semantic model — zero-config (reads
+      `~/WeKnora/.env`), governed model over `audit_logs` / `knowledge_bases` /
+      `knowledges` / `sessions` / `messages`, honest calibers included
+      (e.g. "KB queried" = retrieval-cited assistant messages, because
+      `audit_logs` records write-side actions only)
+- [ ] W1.4 npm 0.1.0 release train + awesome-dsh submission
+      (hook: "ask your WeKnora anything")
 
-## 纪律
-- 口径随行不可剥离；单 SELECT 护栏；指标定义变更走版本不走就地改。
+### M1 · Governance depth (week 2-3)
+- [ ] joins / multi-table models + metric versioning + caliber drift alarms
+      (same question across versions, side by side)
+- [ ] result cache and a query audit log (what was asked, which caliber version)
+
+### M2 · Compatibility & multi-DB (week 4-6)
+- [ ] MDL-style model file compatibility layer (WrenAI ecosystem models import directly)
+- [ ] DuckDB execution backend + typed tools for the harness plugin surface
+
+## Discipline
+- Calibers ride with results — never numbers alone; single-SELECT guard is
+  non-negotiable; metric definition changes are version bumps, not edits-in-place.

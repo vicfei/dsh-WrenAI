@@ -1,24 +1,66 @@
 #!/usr/bin/env python3
-"""自托管语义层 + 口径随行的问数引擎（WrenAI 概念位 M0）
+"""Self-hosted semantic layer + calibers-ride-with-results ask-data engine (WrenAI concept seat, M0)
 
-上游 WrenAI（18.3k★，多许可：core Apache-2.0）= GenBI/text-to-SQL + 语义层。
-本插件原生实现其差异核心——**自托管语义层**：指标带版本化口径（caliber），
-生成的 SQL 走语义视图，结果逐指标附口径声明（口径随行 = 与裸 NL2SQL 的
-分界线，也是因子鉴真口径治理思想的数据问数版）。净室实现，零上游代码关系。
+Upstream WrenAI (18.3k★, multi-licensed: core Apache-2.0) = GenBI / governed text-to-SQL
+with a semantic layer. This plugin natively implements the differentiated core — the
+**self-hosted semantic layer**: metrics carry versioned calibers, generated SQL runs
+against semantic views, and every result ships with the caliber statements of the
+metrics it used ("calibers ride with results" — the line vs raw NL2SQL, and the
+data-asking edition of the factor-authentication caliber discipline). Clean-room,
+zero upstream code.
 
-管线：--init 把 K 线装进 SQLite 并按语义模型建视图（指标窗口预计算）→
-问数时 LLM 只见语义目录（维度/指标/口径）产出 SELECT → 确定性校验
-（仅允许单条 SELECT）→ 执行 → 数字+口径一起出。
+Pipeline: --init loads klines into SQLite and builds the semantic view (metric windows
+precomputed) → on ask, the LLM sees only the semantic catalog (dimensions/metrics/
+calibers) and emits one SELECT → deterministic guard (single SELECT only) → execute →
+numbers + calibers together.
 
-用法：
+Usage:
   python3 scripts/ask.py --init /tmp/btc_365.json
-  python3 scripts/ask.py --ask "最近30天的平均收盘价和年化波动率是多少？"
+  python3 scripts/ask.py --ask "average close and annualized volatility over the last 30 days?"
+  python3 scripts/ask.py --ask "最近30天的平均收盘价和年化波动率是多少？" --lang zh
 """
 import argparse, datetime as dt, json, math, os, re, sqlite3, subprocess, sys
 
 KIT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(KIT, "semantic", "semantic.db")
 MODEL = os.path.join(KIT, "semantic", "models.yaml")
+
+# English is the first language (family rule); Chinese is the --lang zh fallback.
+STR = {
+    "en": {
+        "ask": "## Ask: {q}",
+        "calibers": "## Calibers riding with this result (metric definitions used)",
+        "guard": "guard: single SELECT only — rejected: {sql}",
+        "init": "init → {db} · {symbol} · {n} bars · view v_metrics (calibers in semantic/models.yaml)",
+        "retry_hint": "\n\nThe previously generated SQL failed to execute with error: {err}\nFix it and output again.",
+        "footer": "---\n*engine: semantic-ask v0 · single-SELECT guard · self-heal retry · calibers versioned in semantic/models.yaml · {ts}*",
+    },
+    "zh": {
+        "ask": "## 问数：{q}",
+        "calibers": "## 口径随行（本次引用的指标定义）",
+        "guard": "护栏：仅允许单条 SELECT，拒绝：{sql}",
+        "init": "init → {db} · {symbol} · {n} bars · 视图 v_metrics（口径见 semantic/models.yaml）",
+        "retry_hint": "\n\n上次生成的 SQL 执行报错：{err}\n请修正后重新输出。",
+        "footer": "---\n*engine: semantic-ask v0 · SQLite 单条 SELECT 护栏 · 自愈重试 · 口径版本随 semantic/models.yaml · {ts}*",
+    },
+}
+
+
+def t(key, **kw):
+    return STR[LANG].get(key, key).format(**kw)
+
+
+def _split_inline(body):
+    # split an inline {k: v, ...} body on commas, but never inside double quotes
+    parts, buf, inq = [], [], False
+    for ch in body:
+        if ch == '"':
+            inq = not inq
+        elif ch == "," and not inq:
+            parts.append("".join(buf)); buf = []; continue
+        buf.append(ch)
+    parts.append("".join(buf))
+    return [p.strip() for p in parts if p.strip()]
 
 
 def load_yaml(path):
@@ -38,7 +80,7 @@ def load_yaml(path):
             if m2 and cur in ("dimensions", "measures", "metrics"):
                 name, body = m2.group(1), m2.group(2)
                 d = {}
-                for part in body.split(","):
+                for part in _split_inline(body):
                     k, _, v = part.partition(":")
                     d[k.strip()] = v.strip().strip('"')
                 out[cur][name] = d
@@ -70,16 +112,17 @@ def init_db(klines_json):
     """)
     con.commit()
     n = con.execute("SELECT COUNT(*) FROM bars").fetchone()[0]
-    print(f"init → {DB} · {symbol} · {n} bars · 视图 v_metrics（口径见 semantic/models.yaml）")
+    print(t("init", db=DB, symbol=symbol, n=n))
     con.close()
 
 
 def llm(catalog, question):
     key = subprocess.run(["bash", "-c", 'grep -m1 "^export DEEPSEEK_API_KEY=" ~/.bashrc | cut -d= -f2'],
                          capture_output=True, text=True).stdout.strip().strip('"')
-    sysmsg = ("你是语义层 SQL 生成器。只能对视图 v_metrics 写【单条 SELECT】（可用 SQLite 聚合函数），"
-              "禁止 INSERT/UPDATE/DELETE/DDL/多语句。输出 JSON {\"sql\":\"...\",\"metrics_used\":[指标名]}。"
-              "指标口径目录（结果的语义来源）：\n" + catalog)
+    sysmsg = ("You are a semantic-layer SQL generator. Write a SINGLE SELECT against the view v_metrics "
+              "(SQLite aggregate functions allowed). INSERT/UPDATE/DELETE/DDL/multiple statements are forbidden. "
+              "Output JSON {\"sql\":\"...\",\"metrics_used\":[metric names]}. "
+              "Metric caliber catalog (the semantic source of any result):\n" + catalog)
     body = {"model": "deepseek-chat", "temperature": 0, "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": sysmsg}, {"role": "user", "content": question}]}
     r = subprocess.run(["curl", "-s", "-m", "120", "https://api.deepseek.com/chat/completions",
@@ -88,11 +131,22 @@ def llm(catalog, question):
     return json.loads(json.loads(r.stdout)["choices"][0]["message"]["content"])
 
 
+def guarded(sql):
+    sql = sql.strip().rstrip(";")
+    if not re.match(r"(?is)^SELECT\s.+$", sql) or ";" in sql:
+        sys.exit(t("guard", sql=sql[:120]))
+    return sql
+
+
 def main():
+    global LANG
     ap = argparse.ArgumentParser()
     ap.add_argument("--init")
     ap.add_argument("--ask")
+    ap.add_argument("--lang", choices=("en", "zh"), default="en",
+                    help="output language (default en; zh is the fallback)")
     args = ap.parse_args()
+    LANG = args.lang
     model = load_yaml(MODEL)
     if args.init:
         init_db(args.init)
@@ -102,35 +156,31 @@ def main():
     catalog = json.dumps({k: {n: v.get("caliber", v.get("desc")) for n, v in model.get(k, {}).items()}
                           for k in ("dimensions", "measures", "metrics")}, ensure_ascii=False, indent=1)
     plan = llm(catalog, args.ask)
-    sql = plan["sql"].strip().rstrip(";")
-    if not re.match(r"(?is)^SELECT\s.+$", sql) or ";" in sql:
-        sys.exit(f"护栏：仅允许单条 SELECT，拒绝：{sql[:120]}")
+    sql = guarded(plan["sql"])
     con = sqlite3.connect(DB)
     try:
         try:
             rows = con.execute(sql).fetchall()
         except sqlite3.OperationalError as e:
-            # 语法错回带错误重试一次（语义层自愈）
-            plan = llm(catalog, f"{args.ask}\n\n上次生成的 SQL 执行报错：{e}\n请修正后重新输出。")
-            sql = plan["sql"].strip().rstrip(";")
-            if not re.match(r"(?is)^SELECT\s.+$", sql) or ";" in sql:
-                sys.exit(f"护栏：仅允许单条 SELECT，拒绝：{sql[:120]}")
+            # syntax error → retry once with the error fed back (semantic self-heal)
+            plan = llm(catalog, args.ask + t("retry_hint", err=e))
+            sql = guarded(plan["sql"])
             rows = con.execute(sql).fetchall()
         cols = [d[0] for d in con.execute(sql).description]
     finally:
         con.close()
-    print(f"## 问数：{args.ask}\n")
+    print(t("ask", q=args.ask) + "\n")
     print(f"```sql\n{sql}\n```\n")
     print("| " + " | ".join(cols) + " |")
     print("|" + "---|" * len(cols))
     for r in rows[:12]:
         print("| " + " | ".join(f"{v:.6g}" if isinstance(v, float) else str(v) for v in r) + " |")
-    print("\n## 口径随行（本次引用的指标定义）")
+    print("\n" + t("calibers"))
     for m in plan.get("metrics_used", []):
         meta = model.get("metrics", {}).get(m) or model.get("measures", {}).get(m)
         if meta:
             print(f"- **{m}**: {meta.get('caliber') or meta.get('desc')}")
-    print(f"\n---\n*engine: semantic-ask v0 · SQLite 单条 SELECT 护栏 · 口径版本随 semantic/models.yaml · {dt.datetime.now().isoformat(timespec='seconds')}*")
+    print("\n" + t("footer", ts=dt.datetime.now().isoformat(timespec='seconds')))
 
 
 if __name__ == "__main__":
