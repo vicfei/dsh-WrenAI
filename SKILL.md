@@ -13,6 +13,9 @@ KIT=<this-directory>
 python3 $KIT/scripts/ask.py --init <klines.json>
 python3 $KIT/scripts/ask.py --ask "<question>"            # English-first output
 python3 $KIT/scripts/ask.py --ask "<question>" --lang zh  # Chinese fallback
+# WeKnora ops: zero-config bridge to a WeKnora deployment's own PostgreSQL
+python3 $KIT/scripts/ask.py --weknora --ask "how many times was the test knowledge base queried in the past month?"
+# any PostgreSQL: --pg "postgresql://user:pass@host:5432/db" --model <yaml>
 ```
 
 Semantic model lives in `semantic/models.yaml` (edit for your dataset; the view

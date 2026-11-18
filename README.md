@@ -37,6 +37,35 @@ python3 scripts/ask.py --ask "最近30天的平均收盘价和年化波动率是
 Output is English-first (engine, calibers, docs); `--lang zh` switches the
 user-facing labels to Chinese.
 
+## Ask your WeKnora anything (`--weknora`)
+
+WeKnora (the self-hosted RAG platform) ships no self-observability: its audit
+log records **write-side actions only**, so "how often is this knowledge base
+actually used?" is unanswerable from the UI. dsh-WrenAI connects straight to
+the deployment's PostgreSQL — zero config, DSN resolved from `~/WeKnora/.env`
+(`WREN_PG_DSN` / `WEKNORA_HOME` overrides) — with a preset governed model
+over `audit_logs` / `knowledge_bases` / `knowledges` / `chunks` / `sessions` /
+`messages`:
+
+```bash
+python3 scripts/ask.py --weknora --ask "how many times was the test knowledge base queried in the past month?"
+# → kb_query_events = 2   (live dev deployment, 2026-11-19)
+```
+
+The caliber that rides with that number states the honest measurement:
+retrieval usage = assistant messages whose citations (messages → chunk refs →
+`chunks.knowledge_base_id`) include the KB — **not** raw retrieval calls,
+because WeKnora doesn't audit those. `kb_query_events` (distinct questions)
+and `kb_citations` (citation occurrences, repeats counted) are two different
+calibers on the same join path — the semantic layer keeps them distinct.
+"Which KBs were cited the most this quarter?" ranks both side by side
+(hotpot-pool-500: 1287 events / 34948 citations on the live dev box).
+
+Execution backends: SQLite (stdlib, default) or PostgreSQL via
+`--pg "postgresql://…"` / `--weknora` — `scripts/pgwire.py` is a
+**zero-dependency** PostgreSQL wire-protocol client (SCRAM-SHA-256 verified,
+MD5, cleartext, optional TLS), so the whole kit stays stdlib-only Python.
+
 Real smoke (binance BTC/USDT 365d, 2026-11-17): *avg close 75,870 · vol 36.7%*
 — with the vol metric's caliber formula (`sqrt(252×mean(ret²))`, 30d rolling,
 non-centered simplification stated) attached to the answer. The first generated
