@@ -1,14 +1,14 @@
 dataset: crypto_daily
-description: 加密资产日频行情语义层（demo 模型）
+description: Daily crypto market semantic layer (demo model)
 table: bars
 dimensions:
-  date: {type: date, desc: 交易日}
-  symbol: {type: string, desc: 资产代码}
+  date: {type: date, desc: trading day}
+  symbol: {type: string, desc: asset symbol}
 measures:
-  close: {expr: close, unit: quote_ccy, desc: 日收盘价}
+  close: {expr: close, unit: quote_ccy, desc: daily close price}
 metrics:
-  ret_1d: {expr: ret_1d, caliber: "close_t / close_{t-1} − 1（日收益）"}
-  ret_30d: {expr: ret_30d, caliber: "close_t / close_{t-30} − 1（30日累计收益，非年化）"}
-  vol_30d_ann: {expr: vol_30d_ann, caliber: "sqrt(252 × mean(ret_1d²))（30日窗口滚动，年化，简化无均值中心化）"}
-  dd_120: {expr: dd_120, caliber: "close_t / max(close_{t-119..t}) − 1（120日滚动回撤，≤0）"}
+  ret_1d: {expr: ret_1d, caliber: "close_t / close_{t-1} − 1 (daily return)"}
+  ret_30d: {expr: ret_30d, caliber: "close_t / close_{t-30} − 1 (30-day cumulative return, NOT annualized)"}
+  vol_30d_ann: {expr: vol_30d_ann, caliber: "sqrt(252 × mean(ret_1d²)) — 30-day rolling window, annualized, simplified: no mean-centering"}
+  dd_120: {expr: dd_120, caliber: "close_t / max(close_{t-119..t}) − 1 (120-day rolling drawdown, ≤0)"}
 view: v_metrics

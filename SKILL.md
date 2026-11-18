@@ -11,7 +11,8 @@ the contract: numbers never travel without their definitions.
 ```bash
 KIT=<this-directory>
 python3 $KIT/scripts/ask.py --init <klines.json>
-python3 $KIT/scripts/ask.py --ask "<question>"
+python3 $KIT/scripts/ask.py --ask "<question>"            # English-first output
+python3 $KIT/scripts/ask.py --ask "<question>" --lang zh  # Chinese fallback
 ```
 
 Semantic model lives in `semantic/models.yaml` (edit for your dataset; the view

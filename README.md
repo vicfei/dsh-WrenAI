@@ -30,8 +30,12 @@ analytics and raw text-to-SQL.**
 ```bash
 git clone https://github.com/vicfei/dsh-WrenAI && cd dsh-wrenai
 python3 scripts/ask.py --init <klines.json>          # load data + build semantic views
-python3 scripts/ask.py --ask "最近30天的平均收盘价和年化波动率是多少？"
+python3 scripts/ask.py --ask "average close and annualized volatility over the last 30 days?"
+python3 scripts/ask.py --ask "最近30天的平均收盘价和年化波动率是多少？" --lang zh   # zh fallback
 ```
+
+Output is English-first (engine, calibers, docs); `--lang zh` switches the
+user-facing labels to Chinese.
 
 Real smoke (binance BTC/USDT 365d, 2026-11-17): *avg close 75,870 · vol 36.7%*
 — with the vol metric's caliber formula (`sqrt(252×mean(ret²))`, 30d rolling,
