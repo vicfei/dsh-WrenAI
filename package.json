@@ -1,0 +1,53 @@
+{
+  "name": "dsh-wrenai",
+  "version": "0.1.0",
+  "description": "Self-hosted semantic layer for DeepSeek Harness — natural-language data questions where metric calibers ride with every result. Single-SELECT guard, self-heal SQL, SQLite/PostgreSQL execution (zero-dependency wire client, SCRAM-SHA-256 verified), and a zero-config --weknora bridge: ask your WeKnora deployment anything.",
+  "bin": {
+    "dsh-wrenai": "bin/dsh-wrenai.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "manifestVersion": 1
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "skills",
+    "semantic/models.yaml",
+    "semantic/weknora.yaml",
+    "cordis.patch.yml",
+    "SKILL.md",
+    "README.md",
+    "ROADMAP.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "python3 tests/test_engine.py && node bin/dsh-wrenai.js --help"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "wrenai",
+    "semantic-layer",
+    "text-to-sql",
+    "data-analytics",
+    "metrics-governance",
+    "weknora",
+    "postgresql",
+    "scram-sha-256",
+    "observability"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vicfei/dsh-WrenAI.git"
+  },
+  "homepage": "https://github.com/vicfei/dsh-WrenAI#readme",
+  "license": "MIT",
+  "author": "vicfei"
+}

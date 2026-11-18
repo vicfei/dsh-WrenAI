@@ -35,8 +35,10 @@ real data source — each solves the other's pain.
       `audit_logs` records write-side actions only; kb_query_events vs
       kb_citations are two calibers). Live smoke hit hand-verified ground truth
       (test KB: 2 events / 30d; hotpot-pool-500: 1287 events / 34948 citations / 90d)
-- [ ] W1.4 npm 0.1.0 release train + awesome-dsh submission
-      (hook: "ask your WeKnora anything")
+- [x] W1.4 npm 0.1.0 release train — root package (bin `dsh-wrenai`, DSH bundle
+      manifest + skill, files whitelist), hermetic test suite + CI, submission
+      kit staged in `docs/marketplace-submission/` (fires after owner publishes
+      npm 0.1.0 — 2FA). awesome-dsh-plugin PR follows the #16227 precedent.
 
 ### M1 · Governance depth (week 2-3)
 - [ ] joins / multi-table models + metric versioning + caliber drift alarms
