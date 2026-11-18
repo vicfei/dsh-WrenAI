@@ -1,0 +1,7 @@
+# dsh-wrenai bundle layer: inserts the plugin into the profile's layer stack.
+# The skill (skills/dsh-wrenai/SKILL.md) is discovered by dsh-skill-filesystem;
+# the CLI stays on PATH via the npm bin. The engine itself is stdlib-only Python
+# (scripts/ask.py + scripts/pgwire.py) — nothing to bundle beyond discovery.
+- insert:
+    - id: dsh-wrenai
+      name: 'dsh-wrenai'

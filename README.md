@@ -25,6 +25,17 @@ analytics and raw text-to-SQL.**
 | SQL safety | varies | **single-SELECT guard** + self-heal retry, deterministic execution (SQLite stdlib) |
 | Self-hosted | — | fully local (semantic/models.yaml + SQLite), no cloud service |
 
+## Install
+
+```bash
+npm i -g dsh-wrenai          # or: dsh plugin add dsh-wrenai
+dsh-wrenai --weknora --ask "how many times was the test knowledge base queried in the past month?"
+```
+
+Requires `python3` on PATH — the engine is **stdlib-only** (no pip installs);
+the npm package is a thin launcher plus the DSH plugin manifest and skill.
+From source: clone and call `python3 scripts/ask.py` directly.
+
 ## Quick start
 
 ```bash

@@ -31,6 +31,7 @@ DB = os.path.join(KIT, "semantic", "semantic.db")
 MODEL = os.path.join(KIT, "semantic", "models.yaml")
 
 # English is the first language (family rule); Chinese is the --lang zh fallback.
+LANG = "en"
 STR = {
     "en": {
         "ask": "## Ask: {q}",
@@ -167,7 +168,7 @@ def llm(catalog, question, dialect, target):
 
 
 def guarded(sql):
-    sql = sql.strip().rstrip(";")
+    sql = sql.strip().rstrip(";").strip()
     if not re.match(r"(?is)^SELECT\s.+$", sql) or ";" in sql:
         sys.exit(t("guard", sql=sql[:120]))
     return sql
