@@ -1,0 +1,39 @@
+dataset: weknora_ops
+description: WeKnora self-observability — ask natural-language questions about the deployment itself (preset model, --weknora)
+tables:
+  knowledge_bases: {key: id, cols: "id, tenant_id, name, created_at, deleted_at"}
+  knowledges: {key: id, cols: "id, knowledge_base_id, tenant_id, title, type, file_type, parse_status, enable_status, created_at, deleted_at"}
+  chunks: {key: id, cols: "id, knowledge_base_id, knowledge_id, chunk_index, is_enabled"}
+  sessions: {key: id, cols: "id, tenant_id, user_id, kind, created_at, deleted_at"}
+  messages: {key: id, cols: "id, session_id, tenant_id, role, model_id, is_fallback, agent_duration_ms, knowledge_references, created_at, deleted_at"}
+  audit_logs: {key: id, cols: "id, tenant_id, actor_user_id, actor_role, action, target_type, target_id, request_path, request_method, outcome, created_at"}
+joins:
+  id_types: "ALL id columns (knowledge_bases.id, knowledges.id, chunks.id, sessions.id, messages.id) are varchar(36)/text, NOT uuid — never cast ids to ::uuid; ref->>'id' from jsonb is text and compares directly"
+  kb_documents: "knowledges.knowledge_base_id = knowledge_bases.id"
+  document_chunks: "chunks.knowledge_id = knowledges.id (chunks.knowledge_base_id also carries the KB directly)"
+  session_messages: "messages.session_id = sessions.id"
+  kb_retrieval_usage: "messages.knowledge_references is a jsonb array of {id: chunk_id, score, content}; explode with JOIN LATERAL jsonb_array_elements(messages.knowledge_references) ref ON TRUE, then chunks.id = ref->>'id' (text = varchar, no cast); KB name resolves via knowledge_bases.name (deleted_at IS NULL)"
+dimensions:
+  day: {desc: "event day = created_at::date on the driving table"}
+  kb_name: {desc: knowledge base name (knowledge_bases.name)}
+  tenant_id: {desc: tenant (multi-tenant isolation dimension)}
+  action: {desc: "audit action vocabulary: knowledge.created, kb.created, kb.updated, kb.deleted, knowledge.reparse_started, rbac.member_added, rbac.access_denied, system.api_key_created, ..."}
+  outcome: {desc: "audit outcome: success | failure"}
+  parse_status: {desc: "document parse state: parsed | parsing | unprocessed | failed"}
+  file_type: {desc: document source file type (pdf, docx, md, ...)}
+  doc_type: {desc: "knowledge type: document | web link | faq ..."}
+  role: {desc: "message role: user | assistant"}
+  is_fallback: {desc: "answer fell back (retrieval/LLM unavailable)"}
+measures:
+  doc_count: {desc: "documents (knowledges rows, deleted_at IS NULL)"}
+  kb_count: {desc: "knowledge bases (knowledge_bases rows, deleted_at IS NULL)"}
+  message_count: {desc: "chat messages (messages rows, deleted_at IS NULL)"}
+  session_count: {desc: "chat sessions (sessions rows, deleted_at IS NULL)"}
+  audit_event_count: {desc: "audit_logs rows"}
+metrics:
+  kb_query_events: {caliber: "DISTINCT COUNT of assistant messages citing at least one chunk of the KB in the time window (messages.role='assistant', messages.deleted_at IS NULL, knowledge_references <> '[]'), joined ref->>'id' = chunks.id → chunks.knowledge_base_id. HONEST LIMIT: WeKnora audit_logs record write-side actions only, so retrieval usage is measured by citations actually served — this counts questions whose answers cited the KB, not raw retrieval calls. Windows: 'past week' = created_at > now() - interval '7 days', 'past month' = '30 days', 'past quarter' = '90 days'."}
+  kb_citations: {caliber: "TOTAL citation occurrences (messages × references) for the KB via the same chunk join path — counts repeats within one answer, unlike kb_query_events which counts distinct messages; a single answer citing 6 chunks counts once in kb_query_events and 6 times here."}
+  doc_parse_success_rate: {caliber: "share of the KB's non-deleted knowledges with parse_status='parsed' — documents still parsing or failed are in the denominator (honest denominator: ALL non-deleted docs, not only finished ones)"}
+  audit_event_count_by_action: {caliber: "audit_logs rows per action in the window — write-side operations ONLY (knowledge.created, kb.*, rbac.*, system.*); retrieval and chat queries are NOT audited by WeKnora, do not look for them here"}
+  fallback_rate: {caliber: "share of assistant messages with is_fallback=true (deleted_at IS NULL) in the window — the honest service-quality signal for answer availability"}
+  avg_answer_latency_ms: {caliber: "AVG(agent_duration_ms) over non-deleted assistant messages in the window — engine-side duration incl. retrieval, excludes client/network time"}

@@ -25,14 +25,16 @@ questions about WeKnora's own operational data ("how many times was the test KB
 queried in the past week?"). WeKnora lacks self-observability; WrenAI lacked a
 real data source — each solves the other's pain.
 - [x] W1.1 EN-first conversion with `--lang zh` fallback (family rule)
-- [ ] W1.2 PostgreSQL execution backend — pluggable executor behind the same
+- [x] W1.2 PostgreSQL execution backend — pluggable executor behind the same
       single-SELECT guard; zero-dependency pure-stdlib PG wire client
-      (SCRAM-SHA-256 auth); `--pg "postgresql://…"` DSN
-- [ ] W1.3 `--weknora` preset semantic model — zero-config (reads
+      (SCRAM-SHA-256 auth, server signature verified); `--pg "postgresql://…"` DSN
+- [x] W1.3 `--weknora` preset semantic model — zero-config (reads
       `~/WeKnora/.env`), governed model over `audit_logs` / `knowledge_bases` /
-      `knowledges` / `sessions` / `messages`, honest calibers included
-      (e.g. "KB queried" = retrieval-cited assistant messages, because
-      `audit_logs` records write-side actions only)
+      `knowledges` / `chunks` / `sessions` / `messages`, honest calibers included
+      ("KB queried" = retrieval-cited assistant messages via chunk refs, because
+      `audit_logs` records write-side actions only; kb_query_events vs
+      kb_citations are two calibers). Live smoke hit hand-verified ground truth
+      (test KB: 2 events / 30d; hotpot-pool-500: 1287 events / 34948 citations / 90d)
 - [ ] W1.4 npm 0.1.0 release train + awesome-dsh submission
       (hook: "ask your WeKnora anything")
 

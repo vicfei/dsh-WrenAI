@@ -82,14 +82,41 @@ def load_yaml(path):
                 out[cur] = {}
         else:
             m2 = re.match(r"^\s+(\w+):\s*\{(.+)\}\s*$", line)
-            if m2 and cur in ("dimensions", "measures", "metrics"):
+            if m2 and cur in ("dimensions", "measures", "metrics", "tables"):
                 name, body = m2.group(1), m2.group(2)
                 d = {}
                 for part in _split_inline(body):
                     k, _, v = part.partition(":")
                     d[k.strip()] = v.strip().strip('"')
                 out[cur][name] = d
+            else:
+                m3 = re.match(r"^\s+(\w+):\s*(.+)$", line)
+                if m3 and cur == "joins":
+                    out.setdefault(cur, {})[m3.group(1)] = m3.group(2).strip().strip('"')
     return out
+
+
+def weknora_dsn():
+    """Zero-config DSN: read the WeKnora deployment's own .env and map the
+    container-internal DB host to the host's loopback (published port)."""
+    from urllib.parse import quote
+    wk = os.environ.get("WEKNORA_HOME") or os.path.expanduser("~/WeKnora")
+    envf = os.path.join(wk, ".env")
+    if not os.path.exists(envf):
+        sys.exit("--weknora: %s not found (set WREN_PG_DSN or WEKNORA_HOME)" % envf)
+    env = {}
+    for line in open(envf):
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, _, v = line.partition("=")
+            env[k.strip()] = v.strip()
+    host = env.get("DB_HOST", "postgres")
+    if host in ("postgres", "db", "app"):  # container-internal name → host loopback
+        host = "127.0.0.1"
+    return "postgresql://%s:%s@%s:%s/%s" % (
+        quote(env.get("DB_USER") or "postgres", safe=""),
+        quote(env.get("DB_PASSWORD") or "", safe=""),
+        host, env.get("DB_PORT") or "5432", env.get("DB_NAME") or "WeKnora")
 
 
 def init_db(klines_json):
@@ -124,9 +151,11 @@ def init_db(klines_json):
 def llm(catalog, question, dialect, target):
     key = subprocess.run(["bash", "-c", 'grep -m1 "^export DEEPSEEK_API_KEY=" ~/.bashrc | cut -d= -f2'],
                          capture_output=True, text=True).stdout.strip().strip('"')
-    sysmsg = (f"You are a semantic-layer SQL generator. Write a SINGLE SELECT against the {dialect} "
-              f"view/table {target} ({dialect} aggregate functions allowed). "
+    sysmsg = (f"You are a semantic-layer SQL generator. Write a SINGLE SELECT against {target} "
+              f"({dialect}; aggregate/window functions allowed). "
               "INSERT/UPDATE/DELETE/DDL/multiple statements are forbidden. "
+              "Metric calibers are binding definitions — follow the join paths they prescribe, "
+              "and prefer metric/dimension names from the catalog. "
               "Output JSON {\"sql\":\"...\",\"metrics_used\":[metric names]}. "
               "Metric caliber catalog (the semantic source of any result):\n" + catalog)
     body = {"model": "deepseek-chat", "temperature": 0, "response_format": {"type": "json_object"},
@@ -181,33 +210,48 @@ def main():
     ap.add_argument("--init")
     ap.add_argument("--ask")
     ap.add_argument("--pg", metavar="DSN", help='PostgreSQL backend, e.g. "postgresql://user:pass@host:5432/db"')
-    ap.add_argument("--model", metavar="PATH", help="semantic model YAML (default semantic/models.yaml)")
+    ap.add_argument("--weknora", action="store_true",
+                    help="zero-config WeKnora preset: PG DSN from ~/WeKnora/.env (WREN_PG_DSN/WEKNORA_HOME override) + semantic/weknora.yaml")
+    ap.add_argument("--model", metavar="PATH", help="semantic model YAML (default semantic/models.yaml; --weknora defaults to semantic/weknora.yaml)")
     ap.add_argument("--lang", choices=("en", "zh"), default="en",
                     help="output language (default en; zh is the fallback)")
     args = ap.parse_args()
     LANG = args.lang
-    model_path = args.model or MODEL
+    pg = args.pg
+    if args.weknora:
+        pg = pg or os.environ.get("WREN_PG_DSN") or weknora_dsn()
+    model_path = args.model or (os.path.join(KIT, "semantic", "weknora.yaml") if args.weknora else MODEL)
     model = load_yaml(model_path)
     if args.init:
-        if args.pg:
+        if pg:
             sys.exit("guard: --init is the SQLite demo loader; --pg backends attach to existing data")
         init_db(args.init)
         return
     if not args.ask:
         print(__doc__); sys.exit(2)
-    dialect = "PostgreSQL" if args.pg else "SQLite"
-    target = model.get("view") or model.get("table") or "v_metrics"
-    catalog = json.dumps({k: {n: v.get("caliber", v.get("desc")) for n, v in model.get(k, {}).items()}
-                          for k in ("dimensions", "measures", "metrics")}, ensure_ascii=False, indent=1)
+    dialect = "PostgreSQL" if pg else "SQLite"
+    if model.get("tables"):
+        target = "the PostgreSQL tables and join paths listed in the catalog"
+        catalog = json.dumps({k: model[k] for k in ("tables", "joins", "dimensions", "measures", "metrics") if model.get(k)},
+                              ensure_ascii=False, indent=1)
+    else:
+        target = "the %s view %s" % (dialect, model.get("view") or model.get("table") or "v_metrics")
+        catalog = json.dumps({k: {n: v.get("caliber", v.get("desc")) for n, v in model.get(k, {}).items()}
+                              for k in ("dimensions", "measures", "metrics")}, ensure_ascii=False, indent=1)
     plan = llm(catalog, args.ask, dialect, target)
     sql = guarded(plan["sql"])
     try:
-        cols, rows = run_sql(args.pg, sql)
+        cols, rows = run_sql(pg, sql)
     except (sqlite3.Error, pgwire.PGError) as e:
         # executor error → retry once with the error fed back (semantic self-heal)
         plan = llm(catalog, args.ask + t("retry_hint", err=e), dialect, target)
         sql = guarded(plan["sql"])
-        cols, rows = run_sql(args.pg, sql)
+        try:
+            cols, rows = run_sql(pg, sql)
+        except (sqlite3.Error, pgwire.PGError) as e:
+            # honest failure: show the SQL and the executor's error, no bare traceback
+            print(f"```sql\n{sql}\n```\n")
+            sys.exit(f"self-heal exhausted — executor error persists: {e}")
     print(t("ask", q=args.ask) + "\n")
     print(f"```sql\n{sql}\n```\n")
     print("| " + " | ".join(cols) + " |")
@@ -219,7 +263,9 @@ def main():
         meta = model.get("metrics", {}).get(m) or model.get("measures", {}).get(m)
         if meta:
             print(f"- **{m}**: {meta.get('caliber') or meta.get('desc')}")
-    backend = "PostgreSQL via pgwire (stdlib wire client)" if args.pg else "SQLite (stdlib)"
+    backend = "SQLite (stdlib)"
+    if pg:
+        backend = "WeKnora PostgreSQL via pgwire" if args.weknora else "PostgreSQL via pgwire (stdlib wire client)"
     print("\n" + t("footer", ts=dt.datetime.now().isoformat(timespec='seconds'), backend=backend))
 
 
