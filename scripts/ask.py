@@ -12,14 +12,19 @@ zero upstream code.
 Pipeline: --init loads klines into SQLite and builds the semantic view (metric windows
 precomputed) → on ask, the LLM sees only the semantic catalog (dimensions/metrics/
 calibers) and emits one SELECT → deterministic guard (single SELECT only) → execute →
-numbers + calibers together.
+numbers + calibers together. Execution is pluggable: SQLite (default, stdlib) or
+PostgreSQL via --pg (pgwire, a zero-dependency wire-protocol client) — the semantic
+layer above (catalog → guarded SELECT → calibers ride) is identical either way.
 
 Usage:
   python3 scripts/ask.py --init /tmp/btc_365.json
   python3 scripts/ask.py --ask "average close and annualized volatility over the last 30 days?"
   python3 scripts/ask.py --ask "最近30天的平均收盘价和年化波动率是多少？" --lang zh
+  python3 scripts/ask.py --ask "..." --pg "postgresql://user:pass@host:5432/db" --model semantic/ops.yaml
 """
 import argparse, datetime as dt, json, math, os, re, sqlite3, subprocess, sys
+
+import pgwire
 
 KIT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(KIT, "semantic", "semantic.db")
@@ -33,7 +38,7 @@ STR = {
         "guard": "guard: single SELECT only — rejected: {sql}",
         "init": "init → {db} · {symbol} · {n} bars · view v_metrics (calibers in semantic/models.yaml)",
         "retry_hint": "\n\nThe previously generated SQL failed to execute with error: {err}\nFix it and output again.",
-        "footer": "---\n*engine: semantic-ask v0 · single-SELECT guard · self-heal retry · calibers versioned in semantic/models.yaml · {ts}*",
+        "footer": "---\n*engine: semantic-ask v0 · single-SELECT guard · self-heal retry · backend: {backend} · calibers versioned in semantic/models.yaml · {ts}*",
     },
     "zh": {
         "ask": "## 问数：{q}",
@@ -41,7 +46,7 @@ STR = {
         "guard": "护栏：仅允许单条 SELECT，拒绝：{sql}",
         "init": "init → {db} · {symbol} · {n} bars · 视图 v_metrics（口径见 semantic/models.yaml）",
         "retry_hint": "\n\n上次生成的 SQL 执行报错：{err}\n请修正后重新输出。",
-        "footer": "---\n*engine: semantic-ask v0 · SQLite 单条 SELECT 护栏 · 自愈重试 · 口径版本随 semantic/models.yaml · {ts}*",
+        "footer": "---\n*engine: semantic-ask v0 · 单条 SELECT 护栏 · 自愈重试 · 后端：{backend} · 口径版本随 semantic/models.yaml · {ts}*",
     },
 }
 
@@ -116,11 +121,12 @@ def init_db(klines_json):
     con.close()
 
 
-def llm(catalog, question):
+def llm(catalog, question, dialect, target):
     key = subprocess.run(["bash", "-c", 'grep -m1 "^export DEEPSEEK_API_KEY=" ~/.bashrc | cut -d= -f2'],
                          capture_output=True, text=True).stdout.strip().strip('"')
-    sysmsg = ("You are a semantic-layer SQL generator. Write a SINGLE SELECT against the view v_metrics "
-              "(SQLite aggregate functions allowed). INSERT/UPDATE/DELETE/DDL/multiple statements are forbidden. "
+    sysmsg = (f"You are a semantic-layer SQL generator. Write a SINGLE SELECT against the {dialect} "
+              f"view/table {target} ({dialect} aggregate functions allowed). "
+              "INSERT/UPDATE/DELETE/DDL/multiple statements are forbidden. "
               "Output JSON {\"sql\":\"...\",\"metrics_used\":[metric names]}. "
               "Metric caliber catalog (the semantic source of any result):\n" + catalog)
     body = {"model": "deepseek-chat", "temperature": 0, "response_format": {"type": "json_object"},
@@ -138,49 +144,83 @@ def guarded(sql):
     return sql
 
 
+def run_sql(dsn, sql):
+    """Execute a guarded SELECT on the selected backend → (cols, rows).
+    Raises sqlite3.OperationalError / pgwire.PGError with the executor's message."""
+    if dsn:
+        con = pgwire.connect(dsn)
+        try:
+            return con.query(sql)
+        finally:
+            con.close()
+    con = sqlite3.connect(DB)
+    try:
+        cur = con.execute(sql)
+        rows = cur.fetchall()
+        return [d[0] for d in cur.description], rows
+    finally:
+        con.close()
+
+
+def fmt(v):
+    if v is None:
+        return ""
+    if isinstance(v, float):
+        return f"{v:.6g}"
+    if not isinstance(v, int):  # PG text format → compress numerics for display
+        try:
+            return f"{float(v):.6g}"
+        except ValueError:
+            return str(v)
+    return str(v)
+
+
 def main():
     global LANG
     ap = argparse.ArgumentParser()
     ap.add_argument("--init")
     ap.add_argument("--ask")
+    ap.add_argument("--pg", metavar="DSN", help='PostgreSQL backend, e.g. "postgresql://user:pass@host:5432/db"')
+    ap.add_argument("--model", metavar="PATH", help="semantic model YAML (default semantic/models.yaml)")
     ap.add_argument("--lang", choices=("en", "zh"), default="en",
                     help="output language (default en; zh is the fallback)")
     args = ap.parse_args()
     LANG = args.lang
-    model = load_yaml(MODEL)
+    model_path = args.model or MODEL
+    model = load_yaml(model_path)
     if args.init:
+        if args.pg:
+            sys.exit("guard: --init is the SQLite demo loader; --pg backends attach to existing data")
         init_db(args.init)
         return
     if not args.ask:
         print(__doc__); sys.exit(2)
+    dialect = "PostgreSQL" if args.pg else "SQLite"
+    target = model.get("view") or model.get("table") or "v_metrics"
     catalog = json.dumps({k: {n: v.get("caliber", v.get("desc")) for n, v in model.get(k, {}).items()}
                           for k in ("dimensions", "measures", "metrics")}, ensure_ascii=False, indent=1)
-    plan = llm(catalog, args.ask)
+    plan = llm(catalog, args.ask, dialect, target)
     sql = guarded(plan["sql"])
-    con = sqlite3.connect(DB)
     try:
-        try:
-            rows = con.execute(sql).fetchall()
-        except sqlite3.OperationalError as e:
-            # syntax error → retry once with the error fed back (semantic self-heal)
-            plan = llm(catalog, args.ask + t("retry_hint", err=e))
-            sql = guarded(plan["sql"])
-            rows = con.execute(sql).fetchall()
-        cols = [d[0] for d in con.execute(sql).description]
-    finally:
-        con.close()
+        cols, rows = run_sql(args.pg, sql)
+    except (sqlite3.Error, pgwire.PGError) as e:
+        # executor error → retry once with the error fed back (semantic self-heal)
+        plan = llm(catalog, args.ask + t("retry_hint", err=e), dialect, target)
+        sql = guarded(plan["sql"])
+        cols, rows = run_sql(args.pg, sql)
     print(t("ask", q=args.ask) + "\n")
     print(f"```sql\n{sql}\n```\n")
     print("| " + " | ".join(cols) + " |")
     print("|" + "---|" * len(cols))
     for r in rows[:12]:
-        print("| " + " | ".join(f"{v:.6g}" if isinstance(v, float) else str(v) for v in r) + " |")
+        print("| " + " | ".join(fmt(v) for v in r) + " |")
     print("\n" + t("calibers"))
     for m in plan.get("metrics_used", []):
         meta = model.get("metrics", {}).get(m) or model.get("measures", {}).get(m)
         if meta:
             print(f"- **{m}**: {meta.get('caliber') or meta.get('desc')}")
-    print("\n" + t("footer", ts=dt.datetime.now().isoformat(timespec='seconds')))
+    backend = "PostgreSQL via pgwire (stdlib wire client)" if args.pg else "SQLite (stdlib)"
+    print("\n" + t("footer", ts=dt.datetime.now().isoformat(timespec='seconds'), backend=backend))
 
 
 if __name__ == "__main__":
