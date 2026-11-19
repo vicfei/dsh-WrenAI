@@ -36,7 +36,7 @@ STR = {
     "en": {
         "ask": "## Ask: {q}",
         "calibers": "## Calibers riding with this result (metric definitions used)",
-        "guard": "guard: single SELECT only — rejected: {sql}",
+        "guard": "guard: single SELECT only (rewrite CTE/WITH as nested subqueries; no writes, no multi-statement) — rejected: {sql}",
         "init": "init → {db} · {symbol} · {n} bars · view v_metrics (calibers in semantic/models.yaml)",
         "retry_hint": "\n\nThe previously generated SQL failed to execute with error: {err}\nFix it and output again.",
         "footer": "---\n*engine: semantic-ask v0 · single-SELECT guard · self-heal retry · backend: {backend} · calibers versioned in semantic/models.yaml · {ts}*",
@@ -44,7 +44,7 @@ STR = {
     "zh": {
         "ask": "## 问数：{q}",
         "calibers": "## 口径随行（本次引用的指标定义）",
-        "guard": "护栏：仅允许单条 SELECT，拒绝：{sql}",
+        "guard": "护栏：仅允许单条 SELECT（CTE/WITH 请改写为嵌套子查询；禁止写语句与多语句），拒绝：{sql}",
         "init": "init → {db} · {symbol} · {n} bars · 视图 v_metrics（口径见 semantic/models.yaml）",
         "retry_hint": "\n\n上次生成的 SQL 执行报错：{err}\n请修正后重新输出。",
         "footer": "---\n*engine: semantic-ask v0 · 单条 SELECT 护栏 · 自愈重试 · 后端：{backend} · 口径版本随 semantic/models.yaml · {ts}*",
@@ -168,9 +168,11 @@ def llm(catalog, question, dialect, target):
 
 
 def guarded(sql):
+    """Normalize + enforce the single-SELECT guard. Raises GuardRejection so the
+    caller can self-heal (retry with the reason fed back) before giving up."""
     sql = sql.strip().rstrip(";").strip()
     if not re.match(r"(?is)^SELECT\s.+$", sql) or ";" in sql:
-        sys.exit(t("guard", sql=sql[:120]))
+        raise ValueError(t("guard", sql=sql[:120]))
     return sql
 
 
@@ -240,19 +242,19 @@ def main():
         catalog = json.dumps({k: {n: v.get("caliber", v.get("desc")) for n, v in model.get(k, {}).items()}
                               for k in ("dimensions", "measures", "metrics")}, ensure_ascii=False, indent=1)
     plan = llm(catalog, args.ask, dialect, target)
-    sql = guarded(plan["sql"])
     try:
-        cols, rows = run_sql(pg, sql)
-    except (sqlite3.Error, pgwire.PGError) as e:
-        # executor error → retry once with the error fed back (semantic self-heal)
-        plan = llm(catalog, args.ask + t("retry_hint", err=e), dialect, target)
         sql = guarded(plan["sql"])
+        cols, rows = run_sql(pg, sql)
+    except (ValueError, sqlite3.Error, pgwire.PGError) as e:
+        # guard rejection or executor error → retry once with the reason fed back
+        plan = llm(catalog, args.ask + t("retry_hint", err=e), dialect, target)
         try:
+            sql = guarded(plan["sql"])
             cols, rows = run_sql(pg, sql)
-        except (sqlite3.Error, pgwire.PGError) as e:
-            # honest failure: show the SQL and the executor's error, no bare traceback
-            print(f"```sql\n{sql}\n```\n")
-            sys.exit(f"self-heal exhausted — executor error persists: {e}")
+        except (ValueError, sqlite3.Error, pgwire.PGError) as e:
+            # honest failure: show the SQL and the reason, no bare traceback
+            print(f"```sql\n{plan.get('sql', '')}\n```\n")
+            sys.exit(f"self-heal exhausted — {e}")
     print(t("ask", q=args.ask) + "\n")
     print(f"```sql\n{sql}\n```\n")
     print("| " + " | ".join(cols) + " |")
