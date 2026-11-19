@@ -110,6 +110,26 @@ server-signature verification, MD5, cleartext, optional TLS) — clean-room from
 the public protocol docs, so the whole kit stays stdlib-only Python plus a
 Node shim.
 
+## Deploying to an intranet WeKnora (air-gapped friendly)
+
+The kit is stdlib-only Python — copy `scripts/` + `semantic/` to any host
+with `python3` (no pip, no npm needed). Point it at your own model service
+and your WeKnora database with environment variables:
+
+```bash
+export WREN_LLM_BASE_URL="http://<your-deepseek-service>:8000/v1"   # OpenAI-compatible endpoint
+export WREN_LLM_MODEL="deepseek-v3"                                 # your served model name
+export WREN_LLM_API_KEY="any-placeholder"                           # if the service needs no auth
+export WREN_PG_DSN="postgresql://user:pass@<weknora-db-host>:5432/WeKnora"
+python3 scripts/ask.py --weknora --ask "how many times was the test KB queried in the past month?"
+```
+
+Notes: `--weknora` can also read the deployment's own `.env`
+(`WEKNORA_HOME=/path/to/weknora`), mapping the container-internal DB host to
+loopback. If your model endpoint is not OpenAI-compatible, adapt the two
+`curl` lines in `llm()`. Verify reachability first:
+`curl -s <base>/models` and `pg_isready -h <host> -p 5432`.
+
 ## Status & roadmap
 
 v0.1 — semantic engine, PG backend, WeKnora bridge; hermetic tests + CI green.

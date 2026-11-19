@@ -72,5 +72,21 @@ with tempfile.TemporaryDirectory() as wk:
           dsn == "postgresql://postgres:p%40ss%21word@127.0.0.1:5432/WeKnora")
     del os.environ["WEKNORA_HOME"]
 
+# 8. intranet LLM config: env overrides with sane defaults
+for k in ("WREN_LLM_BASE_URL", "WREN_LLM_MODEL", "WREN_LLM_API_KEY", "DEEPSEEK_API_KEY"):
+    os.environ.pop(k, None)
+check("default llm url", ask._llm_url() == "https://api.deepseek.com/chat/completions")
+check("default llm model", ask._llm_model() == "deepseek-chat")
+os.environ["WREN_LLM_BASE_URL"] = "http://10.0.0.5:8000/v1/"
+check("intranet base url joins path", ask._llm_url() == "http://10.0.0.5:8000/v1/chat/completions")
+os.environ["WREN_LLM_MODEL"] = "deepseek-v3-intranet"
+check("intranet model override", ask._llm_model() == "deepseek-v3-intranet")
+os.environ["WREN_LLM_API_KEY"] = "dummy"
+check("key env precedence", ask._llm_key() == "dummy")
+os.environ["DEEPSEEK_API_KEY"] = "real"
+check("WREN key beats DEEPSEEK env", ask._llm_key() == "dummy")
+for k in ("WREN_LLM_BASE_URL", "WREN_LLM_MODEL", "WREN_LLM_API_KEY", "DEEPSEEK_API_KEY"):
+    os.environ.pop(k, None)
+
 print("result:", "GREEN" if not FAILS else "RED (%d)" % len(FAILS))
 sys.exit(1 if FAILS else 0)
