@@ -41,7 +41,7 @@ for bad in ("DELETE FROM x", "UPDATE x SET a=1", "INSERT INTO x VALUES (1)",
     try:
         ask.guarded(bad)
         check("guard rejects %r" % bad[:24], False)
-    except SystemExit:
+    except ValueError:
         check("guard rejects %r" % bad[:24], True)
 
 # 5. pgwire DSN parsing (no server touched)
