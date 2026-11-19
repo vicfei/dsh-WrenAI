@@ -149,9 +149,30 @@ def init_db(klines_json):
     con.close()
 
 
+def _llm_key():
+    """API key precedence: WREN_LLM_API_KEY / DEEPSEEK_API_KEY env, then the
+    ~/.bashrc export line (single-box default). An intranet endpoint without
+    auth may set WREN_LLM_API_KEY to any non-empty placeholder."""
+    for var in ("WREN_LLM_API_KEY", "DEEPSEEK_API_KEY"):
+        if os.environ.get(var):
+            return os.environ[var]
+    return subprocess.run(["bash", "-c", 'grep -m1 "^export DEEPSEEK_API_KEY=" ~/.bashrc | cut -d= -f2'],
+                          capture_output=True, text=True).stdout.strip().strip('"')
+
+
+def _llm_url():
+    """OpenAI-compatible chat endpoint; override for intranet model services
+    (vLLM / Ollama / company DeepSeek deployments) via WREN_LLM_BASE_URL."""
+    base = (os.environ.get("WREN_LLM_BASE_URL") or "https://api.deepseek.com").rstrip("/")
+    return base + "/chat/completions"
+
+
+def _llm_model():
+    return os.environ.get("WREN_LLM_MODEL") or "deepseek-chat"
+
+
 def llm(catalog, question, dialect, target):
-    key = subprocess.run(["bash", "-c", 'grep -m1 "^export DEEPSEEK_API_KEY=" ~/.bashrc | cut -d= -f2'],
-                         capture_output=True, text=True).stdout.strip().strip('"')
+    key = _llm_key()
     sysmsg = (f"You are a semantic-layer SQL generator. Write a SINGLE SELECT against {target} "
               f"({dialect}; aggregate/window functions allowed). "
               "INSERT/UPDATE/DELETE/DDL/multiple statements are forbidden. "
@@ -159,9 +180,9 @@ def llm(catalog, question, dialect, target):
               "and prefer metric/dimension names from the catalog. "
               "Output JSON {\"sql\":\"...\",\"metrics_used\":[metric names]}. "
               "Metric caliber catalog (the semantic source of any result):\n" + catalog)
-    body = {"model": "deepseek-chat", "temperature": 0, "response_format": {"type": "json_object"},
+    body = {"model": _llm_model(), "temperature": 0, "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": sysmsg}, {"role": "user", "content": question}]}
-    r = subprocess.run(["curl", "-s", "-m", "120", "https://api.deepseek.com/chat/completions",
+    r = subprocess.run(["curl", "-s", "-m", "120", _llm_url(),
                         "-H", f"Authorization: Bearer {key}", "-H", "Content-Type: application/json",
                         "-d", json.dumps(body)], capture_output=True, text=True)
     return json.loads(json.loads(r.stdout)["choices"][0]["message"]["content"])
