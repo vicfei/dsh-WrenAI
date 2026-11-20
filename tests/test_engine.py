@@ -164,5 +164,30 @@ clean = {"tables": dict((k, {"key": v["key"],
 r2, d2 = modelkit.check_report(clean, CAT, "skel.yaml", "postgresql://u:p@127.0.0.1:5432/WeKnora")
 check("check_report clean on self-generated model", not d2 and "RESULT: clean" in r2)
 
+# 11. model-scope guard (issue #16): unmodeled tables must not execute
+W6 = set(w["tables"])
+flagship = ("SELECT count(*) FROM messages m "
+            "JOIN LATERAL jsonb_array_elements(messages.knowledge_references) ref ON TRUE "
+            "JOIN chunks ON chunks.id = ref->>'id' WHERE m.deleted_at IS NULL")
+check("table_refs extracts flagship citation path", ask.table_refs(flagship) == {"messages", "chunks"})
+check("table_refs handles comma lists + schema + quotes + subqueries",
+      ask.table_refs('SELECT * FROM public.knowledge_bases kb, "chunks" c '
+                     'WHERE x IN (SELECT id FROM audit_logs)') == {"knowledge_bases", "chunks", "audit_logs"})
+check("table_refs skips set-returning funcs and comments",
+      ask.table_refs("SELECT * FROM sessions, generate_series(1,10) g -- FROM task_pending_ops"
+                     " /* FROM automations */") == {"sessions"})
+try:
+    ask.scoped("SELECT count(*) FROM automations", W6)
+    check("scope rejects unmodeled table", False)
+except ValueError as e:
+    check("scope rejects unmodeled table", "automations" in str(e) and "modeled" in str(e))
+check("scope accepts all-modeled flagship SQL", ask.scoped(flagship, W6).startswith("SELECT"))
+check("scope skipped without a tables model", ask.scoped("SELECT 1", None) == "SELECT 1")
+try:
+    ask.scoped("SELECT 1; DROP TABLE x", W6)
+    check("scope still rejects multi-statement first", False)
+except ValueError as e:
+    check("scope still rejects multi-statement first", "single SELECT" in str(e))
+
 print("result:", "GREEN" if not FAILS else "RED (%d)" % len(FAILS))
 sys.exit(1 if FAILS else 0)

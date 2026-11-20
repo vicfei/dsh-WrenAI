@@ -40,6 +40,7 @@ STR = {
         "ask": "## Ask: {q}",
         "calibers": "## Calibers riding with this result (metric definitions used)",
         "guard": "guard: single SELECT only (rewrite CTE/WITH as nested subqueries; no writes, no multi-statement) — rejected: {sql}",
+        "scope": "guard: unmodeled table(s) {bad} — query only the modeled tables ({tables}); rewrite against the catalog — rejected: {sql}",
         "init": "init → {db} · {symbol} · {n} bars · view v_metrics (calibers in semantic/models.yaml)",
         "retry_hint": "\n\nThe previously generated SQL failed to execute with error: {err}\nFix it and output again.",
         "footer": "---\n*engine: semantic-ask v0 · single-SELECT guard · self-heal retry · backend: {backend} · calibers versioned in semantic/models.yaml · {ts}*\n★ github.com/vicfei/dsh-WrenAI",
@@ -48,6 +49,7 @@ STR = {
         "ask": "## 问数：{q}",
         "calibers": "## 口径随行（本次引用的指标定义）",
         "guard": "护栏：仅允许单条 SELECT（CTE/WITH 请改写为嵌套子查询；禁止写语句与多语句），拒绝：{sql}",
+        "scope": "护栏：未建模的表 {bad} —— 只能查询模型内的表（{tables}）；请按目录改写 —— 拒绝：{sql}",
         "init": "init → {db} · {symbol} · {n} bars · 视图 v_metrics（口径见 semantic/models.yaml）",
         "retry_hint": "\n\n上次生成的 SQL 执行报错：{err}\n请修正后重新输出。",
         "footer": "---\n*engine: semantic-ask v0 · 单条 SELECT 护栏 · 自愈重试 · 后端：{backend} · 口径版本随 semantic/models.yaml · {ts}*\n★ github.com/vicfei/dsh-WrenAI",
@@ -200,6 +202,61 @@ def guarded(sql):
     return sql
 
 
+# keywords / set-returning functions that can follow FROM/JOIN without being tables
+_SCOPE_SKIP = {"lateral", "unnest", "generate_series", "generate_subscripts",
+               "jsonb_array_elements", "jsonb_array_elements_text", "jsonb_to_record",
+               "jsonb_to_recordset", "regexp_split_to_table", "string_to_table",
+               "crosstab", "values", "select"}
+
+
+def table_refs(sql):
+    """Best-effort table references in a single SELECT: identifiers after
+    FROM/JOIN (comma lists included), schema-qualified names reduced to the
+    table, quoted identifiers unquoted; set-returning function calls (identifier
+    followed by '('), keywords and subquery parens skipped. A governor, not a
+    parser — same posture as the single-SELECT guard."""
+    refs = set()
+    s = re.sub(r"--[^\n]*", " ", sql)
+    s = re.sub(r"/\*.*?\*/", " ", s, flags=re.S)
+    ident = r'"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*'
+    for m in re.finditer(r"(?i)\b(from|join)\s*", s):
+        pos = m.end()
+        while True:
+            idm = re.match(r"\s*((?:%s)(?:\.(?:%s))*)" % (ident, ident), s[pos:])
+            if not idm:
+                break
+            name = idm.group(1).split(".")[-1].strip('"').lower()
+            pos += idm.end()
+            if name in _SCOPE_SKIP or re.match(r"\s*\(", s[pos:]):
+                break  # keyword or function call, not a table
+            refs.add(name)
+            comma = re.match(r"\s*,\s*", s[pos:])
+            if not comma:
+                # optional alias (AS x / x) may sit between table and comma
+                am = re.match(r"\s+(?:as\s+)?(?:%s)" % ident, s[pos:], re.I)
+                if am:
+                    pos += am.end()
+                    comma = re.match(r"\s*,\s*", s[pos:])
+            if comma:
+                pos += comma.end()
+                continue
+            break
+    return refs
+
+
+def scoped(sql, tables):
+    """Single-SELECT guard + model-scope guard: with a tables model, SQL may
+    only reference modeled tables — numbers from unmodeled tables would ship
+    without calibers. Raises ValueError (self-healable) on either violation."""
+    sql = guarded(sql)
+    if tables:
+        bad = sorted(r for r in table_refs(sql) if r not in tables)
+        if bad:
+            raise ValueError(t("scope", bad=", ".join(bad),
+                               tables=", ".join(sorted(tables)), sql=sql[:120]))
+    return sql
+
+
 def run_sql(dsn, sql):
     """Execute a guarded SELECT on the selected backend → (cols, rows).
     Raises sqlite3.OperationalError / pgwire.PGError with the executor's message."""
@@ -273,14 +330,15 @@ def main():
         catalog = json.dumps({k: {n: v.get("caliber", v.get("desc")) for n, v in model.get(k, {}).items()}
                               for k in ("dimensions", "measures", "metrics")}, ensure_ascii=False, indent=1)
     plan = llm(catalog, args.ask, dialect, target)
+    tables = model.get("tables") or None
     try:
-        sql = guarded(plan["sql"])
+        sql = scoped(plan["sql"], tables)
         cols, rows = run_sql(pg, sql)
     except (ValueError, sqlite3.Error, pgwire.PGError) as e:
         # guard rejection or executor error → retry once with the reason fed back
         plan = llm(catalog, args.ask + t("retry_hint", err=e), dialect, target)
         try:
-            sql = guarded(plan["sql"])
+            sql = scoped(plan["sql"], tables)
             cols, rows = run_sql(pg, sql)
         except (ValueError, sqlite3.Error, pgwire.PGError) as e:
             # honest failure: show the SQL and the reason, no bare traceback
