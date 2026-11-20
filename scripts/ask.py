@@ -39,7 +39,7 @@ STR = {
         "guard": "guard: single SELECT only (rewrite CTE/WITH as nested subqueries; no writes, no multi-statement) — rejected: {sql}",
         "init": "init → {db} · {symbol} · {n} bars · view v_metrics (calibers in semantic/models.yaml)",
         "retry_hint": "\n\nThe previously generated SQL failed to execute with error: {err}\nFix it and output again.",
-        "footer": "---\n*engine: semantic-ask v0 · single-SELECT guard · self-heal retry · backend: {backend} · calibers versioned in semantic/models.yaml · {ts}*",
+        "footer": "---\n*engine: semantic-ask v0 · single-SELECT guard · self-heal retry · backend: {backend} · calibers versioned in semantic/models.yaml · {ts}*\n★ github.com/vicfei/dsh-WrenAI",
     },
     "zh": {
         "ask": "## 问数：{q}",
@@ -47,7 +47,7 @@ STR = {
         "guard": "护栏：仅允许单条 SELECT（CTE/WITH 请改写为嵌套子查询；禁止写语句与多语句），拒绝：{sql}",
         "init": "init → {db} · {symbol} · {n} bars · 视图 v_metrics（口径见 semantic/models.yaml）",
         "retry_hint": "\n\n上次生成的 SQL 执行报错：{err}\n请修正后重新输出。",
-        "footer": "---\n*engine: semantic-ask v0 · 单条 SELECT 护栏 · 自愈重试 · 后端：{backend} · 口径版本随 semantic/models.yaml · {ts}*",
+        "footer": "---\n*engine: semantic-ask v0 · 单条 SELECT 护栏 · 自愈重试 · 后端：{backend} · 口径版本随 semantic/models.yaml · {ts}*\n★ github.com/vicfei/dsh-WrenAI",
     },
 }
 
