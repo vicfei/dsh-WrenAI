@@ -5,7 +5,8 @@ tables:
   knowledges: {key: id, cols: "id, knowledge_base_id, tenant_id, title, type, file_type, parse_status, enable_status, created_at, deleted_at"}
   chunks: {key: id, cols: "id, knowledge_base_id, knowledge_id, chunk_index, is_enabled"}
   sessions: {key: id, cols: "id, tenant_id, user_id, kind, created_at, deleted_at"}
-  messages: {key: id, cols: "id, session_id, tenant_id, role, model_id, is_fallback, agent_duration_ms, knowledge_references, created_at, deleted_at"}
+  # messages.tenant_id dropped upstream (agent_tenant_id remains; tenant scope rides sessions.tenant_id) — caught by --check 2026-11-20
+  messages: {key: id, cols: "id, session_id, role, model_id, is_fallback, agent_duration_ms, knowledge_references, created_at, deleted_at"}
   audit_logs: {key: id, cols: "id, tenant_id, actor_user_id, actor_role, action, target_type, target_id, request_path, request_method, outcome, created_at"}
 joins:
   id_types: "ALL id columns (knowledge_bases.id, knowledges.id, chunks.id, sessions.id, messages.id) are varchar(36)/text, NOT uuid — never cast ids to ::uuid; ref->>'id' from jsonb is text and compares directly"

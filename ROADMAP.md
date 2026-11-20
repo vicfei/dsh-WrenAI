@@ -40,6 +40,23 @@ real data source — each solves the other's pain.
       kit staged in `docs/marketplace-submission/` (fires after owner publishes
       npm 0.1.0 — 2FA). awesome-dsh-plugin PR follows the #16227 precedent.
 
+### W2 · Model lifecycle — deterministic closure (2026-11-20)
+A compiler ships its own parser: model construction and drift accounting are
+catalog computation, so they live in the engine (zero LLM). Meaning stays human.
+- [x] W2.1 `--bootstrap` — catalog → skeleton YAML (#15): public base tables,
+      blacklist internals (`schema_migrations`, `task_*`, …); cols with compact
+      types; keys from catalog PKs; joins from **declared FKs only** (survey:
+      21 FKs all in newer subsystems, core chain declares none — skeleton says
+      so); hard disclosure *no calibers ride*; `load_yaml` round-trip. Works
+      with any `--pg` DSN, not just WeKnora. Live dev: 86 tables / 1174 cols /
+      20 FK joins.
+- [x] W2.2 `--check` — column-granular drift (#15): **drift = model claims
+      broken** (dropped table/column, type change) → exit 1 (CI-able); new
+      catalog columns / unmodeled tables are info, so curated partial models
+      stay green while their claims hold. First live run caught the preset's
+      `messages.tenant_id` claim gone upstream (tenant scope rides
+      `sessions.tenant_id`) — repaired in the same PR.
+
 ### M1 · Governance depth (week 2-3)
 - [ ] joins / multi-table models + metric versioning + caliber drift alarms
       (same question across versions, side by side)
