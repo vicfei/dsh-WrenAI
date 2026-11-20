@@ -48,6 +48,27 @@ dsh-wrenai --weknora --ask "how many times was the test knowledge base queried i
 与 `kb_citations`（引用出现次数）是同一 join 路径上的两个口径——"本季度哪些库被引用
 最多？"会把两者并排列出（live dev 机上 hotpot-pool-500：1287 事件 / 34948 引用）。
 
+## 模型生命周期：bootstrap 起骨架，--check 守诚实
+
+对着 90 张表手写模型是苦役，而模型会随上游 schema 演进无声腐烂。两件确定性的事
+现在都在引擎里——零 LLM，纯 stdlib：
+
+```bash
+dsh-wrenai --weknora --bootstrap > my-model.yaml      # 目录 -> 骨架（stdout）
+dsh-wrenai --pg "postgresql://u:p@host:5432/db" --bootstrap > model.yaml   # 任意 PostgreSQL
+dsh-wrenai --weknora --model my-model.yaml --check    # 模型 vs 活目录，漂移 exit 1
+```
+
+- **`--bootstrap`** 读 `information_schema`（public schema、基表；黑名单排除
+  `schema_migrations` / `task_*` 等框架内部表），产出骨架：每表的列清单带紧凑类型、
+  key 取目录 PK、joins **只收显式声明的外键**——不做命名约定猜测（错误的 join 边比
+  缺失更糟）。骨架带硬披露：**无口径随行**——含义（维度/度量/指标）留给人类。产物
+  可回灌：`--bootstrap > m.yaml` 直接进 `--check` 与 `--ask`。
+- **`--check`** 列粒度对账模型 vs 活目录。**漂移 = 模型的声明失效**——表/列被删、
+  列类型变更（`varchar(36)` vs `uuid` 这类血泪坑）——exit 1，可进 CI。活目录新增列与
+  未建模表只算提示：刻意裁剪的部分模型只要声明仍成立就保持绿。dev 机首跑就抓到本仓
+  自带 preset 声明的 `messages.tenant_id` 已被上游删除——修复随同一变更合入。
+
 ## 为什么（NL2SQL 插件已有——缺的是语义层）
 
 | | 裸 NL2SQL 插件 | **dsh-WrenAI** |

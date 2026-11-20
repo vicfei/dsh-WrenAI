@@ -55,6 +55,35 @@ occurrences) are two calibers on the same join path — "which KBs were cited
 most this quarter?" ranks both side by side (hotpot-pool-500: 1287 events /
 34948 citations on the live dev box).
 
+## Model lifecycle: bootstrap a model, then keep it honest
+
+Hand-writing a model over 90 tables is a chore, and models rot silently as the
+upstream schema evolves. Both deterministic parts live in the engine — zero
+LLM, stdlib only:
+
+```bash
+dsh-wrenai --weknora --bootstrap > my-model.yaml      # catalog -> skeleton (stdout)
+dsh-wrenai --pg "postgresql://u:p@host:5432/db" --bootstrap > model.yaml   # any PostgreSQL
+dsh-wrenai --weknora --model my-model.yaml --check    # model vs live catalog, exit 1 on drift
+```
+
+- **`--bootstrap`** reads `information_schema` (public schema, base tables;
+  framework internals like `schema_migrations` / `task_*` blacklisted) and
+  emits a skeleton: every table's columns with compact types, key from the
+  catalog PK, joins from **declared foreign keys only** — no name-convention
+  guessing (a wrong join edge is worse than a missing one). The skeleton
+  carries the hard disclosure *no calibers ride*: meaning
+  (dimensions/measures/metrics) stays human. Output round-trips —
+  `--bootstrap > m.yaml` feeds straight back into `--check` and `--ask`.
+- **`--check`** drift-accounts a model against the live catalog at column
+  granularity. **Drift = the model's claims are broken** — table/column gone,
+  column type changed (the `varchar(36)` vs `uuid` class of hazards) — which
+  exits 1 and is CI-able. New catalog columns and unmodeled tables are info,
+  not drift: a deliberately curated partial model stays green while its claims
+  hold. First live run on the dev box caught this repo's own preset claiming
+  `messages.tenant_id`, which upstream had removed — the repair rode in the
+  same change.
+
 ## Why (NL2SQL plugins exist — what's missing is the semantic layer)
 
 | | raw NL2SQL plugins | **dsh-WrenAI** |
