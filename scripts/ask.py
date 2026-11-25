@@ -21,10 +21,13 @@ Usage:
   python3 scripts/ask.py --ask "average close and annualized volatility over the last 30 days?"
   python3 scripts/ask.py --ask "最近30天的平均收盘价和年化波动率是多少？" --lang zh
   python3 scripts/ask.py --ask "..." --pg "postgresql://user:pass@host:5432/db" --model semantic/ops.yaml
+  python3 scripts/ask.py --weknora --bootstrap > my-model.yaml   # catalog -> skeleton (no LLM)
+  python3 scripts/ask.py --weknora --model semantic/weknora.yaml --check  # drift report
 """
 import argparse, datetime as dt, json, math, os, re, sqlite3, subprocess, sys
 
 import pgwire
+from model import catalog, run as model_run  # --bootstrap / --check (issue #15)
 
 KIT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(KIT, "semantic", "semantic.db")
@@ -233,6 +236,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--init")
     ap.add_argument("--ask")
+    ap.add_argument("--bootstrap", action="store_true",
+                    help="emit a skeleton semantic model from the PostgreSQL catalog to stdout (zero LLM, no calibers ride); combine with --pg DSN or --weknora")
+    ap.add_argument("--check", action="store_true",
+                    help="drift-check the semantic model against the live catalog (table/column/type diff; exit 1 on drift)")
     ap.add_argument("--pg", metavar="DSN", help='PostgreSQL backend, e.g. "postgresql://user:pass@host:5432/db"')
     ap.add_argument("--weknora", action="store_true",
                     help="zero-config WeKnora preset: PG DSN from ~/WeKnora/.env (WREN_PG_DSN/WEKNORA_HOME override) + semantic/weknora.yaml")
@@ -250,6 +257,9 @@ def main():
         if pg:
             sys.exit("guard: --init is the SQLite demo loader; --pg backends attach to existing data")
         init_db(args.init)
+        return
+    if args.bootstrap or args.check:
+        model_run(args, model, model_path, pg)
         return
     if not args.ask:
         print(__doc__); sys.exit(2)
