@@ -44,6 +44,20 @@ STR = {
         "new_cols": "columns new in the catalog on modeled tables (info, not drift): {n}",
         "result_drift": "RESULT: DRIFT - exit 1",
         "result_clean": "RESULT: clean - model claims hold against the live catalog ({n} tables, {c} columns compared)",
+        "result_drift": "RESULT: DRIFT - exit 1",
+        "result_clean": "RESULT: clean - model claims hold against the live catalog ({n} tables, {c} columns compared)",
+        "cal_report_head": "## Caliber diff - new model vs old model",
+        "cal_report_meta": "new: {new_path} (dataset {new_ds})\nold: {old_path} (dataset {old_ds})\ncalibers compared: {n}",
+        "cal_drift_n": "drift: {n} caliber(s) edited in place - version did not move",
+        "cal_info_n": "info (recorded, not drift): {n}",
+        "f_cal_edited": "[EDITED IN PLACE] {kind} {name} - caliber text changed, version still v{version} - bump the version, do not edit",
+        "f_cal_bumped": "[superseded] {name}: v{old} -> v{new} - {what}",
+        "f_cal_text_changed": "caliber text changed",
+        "f_cal_text_same": "caliber text unchanged",
+        "f_cal_new": "[new] {kind} {name} - no old version to compare",
+        "f_cal_removed": "[removed] {name} - in the old model, gone from the new",
+        "cal_no_change": "no caliber differences between the two models",
+        "cal_result_clean": "RESULT: clean - no caliber moved without a version bump ({n} compared)",
     },
     "zh": {
         "skeleton_note": ("目录生成的骨架 —— 无口径随行（未定义任何 metrics/measures/dimensions）；"
@@ -62,6 +76,20 @@ STR = {
         "new_cols": "已建模表上的目录新增列（仅提示，不算漂移）：{n}",
         "result_drift": "结论：有漂移 —— exit 1",
         "result_clean": "结论：干净 —— 模型声明与活目录一致（{n} 表 / {c} 列对账）",
+        "result_drift": "结论：有漂移 —— exit 1",
+        "result_clean": "结论：干净 —— 模型声明与活目录一致（{n} 表 / {c} 列对账）",
+        "cal_report_head": "## 口径对比 —— 新模型 vs 旧模型",
+        "cal_report_meta": "新：{new_path}（dataset {new_ds}）\n旧：{old_path}（dataset {old_ds}）\n对比口径数：{n}",
+        "cal_drift_n": "漂移：{n} 条口径原地改动 —— 版本号未动",
+        "cal_info_n": "提示（留痕，不算漂移）：{n}",
+        "f_cal_edited": "[原地改动] {kind} {name} —— 口径文本变了、版本仍是 v{version} —— 请升版本，不要原地改",
+        "f_cal_bumped": "[已接替] {name}：v{old} -> v{new} —— {what}",
+        "f_cal_text_changed": "口径文本已变",
+        "f_cal_text_same": "口径文本未变",
+        "f_cal_new": "[新增] {kind} {name} —— 无旧版可对比",
+        "f_cal_removed": "[移除] {name} —— 旧模型有、新模型无",
+        "cal_no_change": "两个模型之间没有口径差异",
+        "cal_result_clean": "结论：干净 —— 没有口径在版本不动的情况下变化（对比 {n} 条）",
     },
 }
 
@@ -264,5 +292,71 @@ def run(args, model, model_path, pg):
     if not model.get("tables"):
         sys.exit(t("no_tables_model"))
     report, has_drift = check_report(model, cat, model_path, pg)
+    print(report)
+    sys.exit(1 if has_drift else 0)
+
+
+# ── W3.1: caliber versioning + deterministic caliber-drift alarm (#19) ──────
+
+def caliber_index(model):
+    """Every caliber-bearing entry of a model, keyed by name:
+    {name: {"kind": metric|measure, "version": str, "text": caliber-or-desc}}.
+    A missing `version` reads as 1 — every pre-W3 model stays valid."""
+    out = {}
+    for kind in ("metrics", "measures"):
+        for name, meta in (model.get(kind) or {}).items():
+            out[name] = {"kind": kind.rstrip("s"), "version": str(meta.get("version", "1")),
+                         "text": meta.get("caliber") or meta.get("desc") or ""}
+    return out
+
+
+def caliber_diff(new, old):
+    """Two model dicts -> (findings, n_compared). Pure; the alarm of #19.
+
+    DRIFT (exit-able) = a caliber text changed while its version did not move —
+    an edit-in-place, exactly what the discipline forbids. A text change WITH a
+    version bump is a supersession: recorded as info, never drift. New/removed
+    entries are info too — arrival is not drift."""
+    ni, oi = caliber_index(new), caliber_index(old)
+    findings, n = [], 0
+    for name in sorted(set(ni) | set(oi)):
+        if name not in ni:
+            findings.append(("info", t("f_cal_removed", name=name)))
+            continue
+        if name not in oi:
+            findings.append(("info", t("f_cal_new", name=name, kind=ni[name]["kind"])))
+            continue
+        n += 1
+        if ni[name]["text"] != oi[name]["text"] and ni[name]["version"] == oi[name]["version"]:
+            findings.append(("drift", t("f_cal_edited", name=name, version=ni[name]["version"], kind=ni[name]["kind"])))
+        elif ni[name]["version"] != oi[name]["version"]:
+            what = t("f_cal_text_changed", name=name) if ni[name]["text"] != oi[name]["text"] else t("f_cal_text_same", name=name)
+            findings.append(("info", t("f_cal_bumped", name=name, old=oi[name]["version"], new=ni[name]["version"], what=what)))
+    return findings, n
+
+
+def calibers_report(new, old, new_path, old_path):
+    findings, n = caliber_diff(new, old)
+    drifts = [f for kind, f in findings if kind == "drift"]
+    lines = [t("cal_report_head"), t("cal_report_meta", new_path=new_path, old_path=old_path,
+                                     new_ds=new.get("dataset") or "?", old_ds=old.get("dataset") or "?", n=n), ""]
+    if drifts:
+        lines.append(t("cal_drift_n", n=len(drifts)))
+        lines += ["- " + f for f in drifts]
+    infos = [f for kind, f in findings if kind == "info"]
+    if infos:
+        lines.append(t("cal_info_n", n=len(infos)))
+        lines += ["- " + f for f in infos]
+    if not findings:
+        lines.append(t("cal_no_change"))
+    lines += ["", t("result_drift" if drifts else "cal_result_clean", n=n)]
+    return "\n".join(lines), bool(drifts)
+
+
+def run_calibers(args, new_model, new_path):
+    """Entry from ask.py main(): --calibers <new> --against <old>."""
+    old_path = args.against
+    old_model = __import__("ask").load_yaml(old_path)
+    report, has_drift = calibers_report(new_model, old_model, new_path, old_path)
     print(report)
     sys.exit(1 if has_drift else 0)

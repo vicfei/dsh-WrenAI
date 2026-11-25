@@ -69,6 +69,28 @@ dsh-wrenai --weknora --model my-model.yaml --check    # 模型 vs 活目录，�
   未建模表只算提示：刻意裁剪的部分模型只要声明仍成立就保持绿。dev 机首跑就抓到本仓
   自带 preset 声明的 `messages.tenant_id` 已被上游删除——修复随同一变更合入。
 
+## 口径可问责：定义带版本，问数留台账
+
+纪律写着"指标定义的改动是升版本，不是原地改"——W3 把它变成机制，并让每次问数成为
+一条只增不改的证据：
+
+```bash
+dsh-wrenai --model new.yaml --calibers --against old.yaml   # 口径漂移告警（零 LLM）
+dsh-wrenai --weknora --ask "……" --ledger                    # 把这次问数记入台账（默认在模型旁）
+dsh-wrenai --weknora --ledger-print 5                        # 最近 5 条记录
+dsh-wrenai --weknora --replay wl_<id>                        # 现在重跑记录的 SQL，当时 vs 现在
+```
+
+- **`--calibers --against`** 确定性地对比两个模型的口径文本：口径变了而 `version:`
+  没动 = **漂移，exit 1**（正是纪律禁止的原地改）；随文本一起升了版本 = 留痕的接替；
+  新增/移除只提示。缺 `version:` 按 1 读，旧模型全部兼容。
+- **`--ledger`** 把每次问数追加为一条 ndjson 事件：问题、最终 SQL、判定
+  （ok / self_healed / failed——被拒也照记）、答案实际骑乘的指标版本、结果行
+  （前 50 行，总数永远诚实）。一个模型一条台账，就在模型文件旁边。
+- **`--replay <id>`** 用同样的护栏对着**当前**模型与后端重跑记录的 SQL，报告什么
+  变了：变了的单元格、变了的口径版本。这就是活体形态的口径漂移告警——问一次，
+  改一次定义，重放，看见同一问题在新口径版本下作答。
+
 ## 为什么（NL2SQL 插件已有——缺的是语义层）
 
 | | 裸 NL2SQL 插件 | **dsh-WrenAI** |
@@ -124,7 +146,7 @@ python3 scripts/ask.py --ask "average close and annualized volatility over the l
 ## 状态与路线图
 
 v0.1——语义引擎、PG 后端、WeKnora 桥；hermetic 测试 + CI 绿。
-[ROADMAP](ROADMAP.md)：M1 指标版本化+口径漂移告警；M2 MDL 风格模型兼容+DuckDB 后端。
+[ROADMAP](ROADMAP.md)：M1 结果缓存；M2 MDL 风格模型兼容+DuckDB 后端。
 
 ## 许可与免责
 

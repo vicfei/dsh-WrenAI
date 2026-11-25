@@ -189,5 +189,65 @@ try:
 except ValueError as e:
     check("scope still rejects multi-statement first", "single SELECT" in str(e))
 
+# ── W3: caliber versioning (#19) + query ledger & replay (#20) ──────────────
+
+# 21. caliber index defaults version to 1 and reads caliber-or-desc
+ci = modelkit.caliber_index(ask.load_yaml(ask.MODEL))
+check("caliber_index default version 1", ci["vol_30d_ann"]["version"] == "1" and ci["vol_30d_ann"]["kind"] == "metric")
+
+# 22. an edit-in-place is DRIFT; a version bump is a recorded supersession
+base = {"metrics": {"m1": {"caliber": "count rows", "version": "1"}}}
+edited = {"metrics": {"m1": {"caliber": "count rows WHERE deleted_at IS NULL", "version": "1"}}}
+bumped = {"metrics": {"m1": {"caliber": "count rows WHERE deleted_at IS NULL", "version": "2"}}}
+f_e, _ = modelkit.caliber_diff(edited, base)
+f_b, _ = modelkit.caliber_diff(bumped, base)
+check("caliber edit-in-place is drift", [k for k, _ in f_e] == ["drift"])
+check("caliber bump is info, not drift", all(k == "info" for k, _ in f_b) and "-> v2" in f_b[0][1])
+f_n, _ = modelkit.caliber_diff({"metrics": {"m2": {"caliber": "new"}}}, base)
+check("new metric is info", all(k == "info" for k, _ in f_n) and any("m2" in f for _, f in f_n))
+
+# 23. caliber report exits drift only for unversioned changes
+rep, bad = modelkit.calibers_report(edited, base, "new.yaml", "old.yaml")
+check("calibers_report drift exit", bad and "EDITED IN PLACE" in rep)
+rep2, bad2 = modelkit.calibers_report(bumped, base, "new.yaml", "old.yaml")
+check("calibers_report bump clean", not bad2 and "superseded" in rep2)
+
+# 24. ledger append/read roundtrip; rows recorded fmt-normalized, cap honored
+import json as _json
+tmpd = tempfile.mkdtemp()
+lp = os.path.join(tmpd, "ledger.ndjson")
+ask.ledger_append(lp, {"id": "wl_deadbeef", "at": "2026-11-26T00:00:00", "question": "q", "verdict": "ok",
+                       "metrics_used": [{"name": "m1", "version": "1"}], "rows": [["1"]], "sql": "SELECT 1"})
+es = ask.ledger_read(lp)
+check("ledger roundtrip", len(es) == 1 and es[0]["id"] == "wl_deadbeef" and _json.loads(open(lp).read().strip())["question"] == "q")
+check("ledger default path beside model", ask.ledger_default_path("semantic/weknora.yaml").endswith("semantic/ledger.ndjson"))
+
+# 25. metrics_with_versions resolves through measures too, missing stay out
+mv = ask.metrics_with_versions({"metrics": {"a": {"caliber": "x", "version": "3"}},
+                                "measures": {"b": {"desc": "y"}}}, ["a", "b", "zz"])
+check("metrics_with_versions", mv == [{"name": "a", "version": "3"}, {"name": "b", "version": "1"}])
+
+# 26. replay diffs cells and caliber versions against the recording (sqlite, no LLM)
+import sqlite3 as _sq
+con = _sq.connect(":memory:")
+con.execute("CREATE TABLE t (k TEXT, n INT)")
+con.executemany("INSERT INTO t VALUES (?,?)", [("a", 1), ("b", 2)])
+con.commit()
+_real_run = ask.run_sql
+ask.run_sql = lambda dsn, sql: (["k", "n"], con.execute(sql).fetchall())
+entry = {"id": "wl_test0001", "at": "2026-11-26T00:00:00", "sql": "SELECT k, n FROM t ORDER BY k",
+         "rows": [["a", "1"], ["b", "5"]], "model": {"dataset": "d"},
+         "metrics_used": [{"name": "m1", "version": "1"}]}
+out = ask.replay(entry, {"metrics": {"m1": {"caliber": "changed text", "version": "2"}}}, None)
+out2 = ask.replay({"id": "wl_test0002", "at": "x", "sql": "SELECT k, n FROM t ORDER BY k",
+                   "rows": [["a", "1"], ["b", "2"]], "model": {}, "metrics_used": []}, {}, None)
+ask.run_sql = _real_run
+check("replay cell diff", "b" in out and "2" in out and "5" in out)
+check("replay caliber diff verdict", "calibers changed" in out and "m1: then v1 -> now v2" in out)
+check("replay stable verdict", "stable" in out2)
+
+
 print("result:", "GREEN" if not FAILS else "RED (%d)" % len(FAILS))
 sys.exit(1 if FAILS else 0)
+
+

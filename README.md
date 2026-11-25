@@ -84,6 +84,34 @@ dsh-wrenai --weknora --model my-model.yaml --check    # model vs live catalog, e
   `messages.tenant_id`, which upstream had removed — the repair rode in the
   same change.
 
+## Caliber accountability: versioned definitions, recorded asks
+
+The discipline says metric definition changes are version bumps, not
+edits-in-place — W3 makes that mechanical, and makes every ask a piece of
+append-only evidence:
+
+```bash
+dsh-wrenai --model new.yaml --calibers --against old.yaml   # caliber drift alarm (zero LLM)
+dsh-wrenai --weknora --ask "..." --ledger                    # record the ask (default: beside the model)
+dsh-wrenai --weknora --ledger-print 5                        # the last 5 recorded asks
+dsh-wrenai --weknora --replay wl_<id>                        # re-run a recorded SQL now, then vs now
+```
+
+- **`--calibers --against`** diffs two models' caliber texts, deterministically.
+  A caliber that changed while its `version:` stayed put is **DRIFT — exit 1**
+  (an edit-in-place, exactly what the discipline forbids); a change that moved
+  the version is a recorded supersession; new/removed metrics are info. A
+  missing `version:` reads as 1, so every pre-existing model stays valid.
+- **`--ledger`** appends each ask as one ndjson event: the question, the final
+  SQL, the verdict (`ok` / `self_healed` / `failed` — rejections record too),
+  the metric versions the answer rode on, and the result rows (first 50, count
+  always honest). One model, one ledger, beside the model file.
+- **`--replay <id>`** re-executes a recorded SQL through the same guards
+  against the *current* model and backend, and reports what moved: cells that
+  changed, caliber versions that changed. That is the caliber-drift alarm in
+  live form — ask once, bump a definition, replay, and see the same question
+  answering under a different caliber version.
+
 ## Why (NL2SQL plugins exist — what's missing is the semantic layer)
 
 | | raw NL2SQL plugins | **dsh-WrenAI** |
@@ -163,9 +191,11 @@ loopback. If your model endpoint is not OpenAI-compatible, adapt the two
 
 ## Status & roadmap
 
-v0.1 — semantic engine, PG backend, WeKnora bridge; hermetic tests + CI green.
-[ROADMAP](ROADMAP.md): M1 metric versioning + caliber drift alarms; M2
-MDL-style model compatibility + DuckDB backend.
+v0.1 — semantic engine, PG backend, WeKnora bridge, model lifecycle
+(`--bootstrap` / `--check`), caliber accountability (versioning + `--calibers`
+alarm, `--ledger` / `--replay`); hermetic tests + CI green.
+[ROADMAP](ROADMAP.md): M1 result cache; M2 MDL-style model compatibility +
+DuckDB backend.
 
 ## License & disclaimer
 

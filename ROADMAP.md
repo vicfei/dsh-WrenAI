@@ -66,9 +66,15 @@ catalog computation, so they live in the engine (zero LLM). Meaning stays human.
       Governs the promise: unmodeled tables cannot ship numbers without calibers.
 
 ### M1 · Governance depth (week 2-3)
-- [ ] joins / multi-table models + metric versioning + caliber drift alarms
-      (same question across versions, side by side)
-- [ ] result cache and a query audit log (what was asked, which caliber version)
+- [x] joins / multi-table models (2026-11-20, W2 #16 + the preset's join paths:
+      the scope guard governs any FROM/JOIN over modeled tables, live-smoked on
+      the flagship citation join) + **metric versioning + caliber drift alarms**
+      (2026-11-26, W3 #19: `version:` on metrics/measures, `--calibers
+      --against` exits 1 on an unversioned caliber edit; the live form is
+      `--replay`, same question across versions side by side, #20)
+- [x] query audit log (2026-11-26, W3 #20: `--ledger` appends every ask —
+      verdict, guard rejections, metric versions, result rows; failures record
+      too) · result cache: cut without guilt
 
 ### M2 · Compatibility & multi-DB (week 4-6)
 - [ ] MDL-style model file compatibility layer (WrenAI ecosystem models import directly)

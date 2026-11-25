@@ -23,11 +23,15 @@ Usage:
   python3 scripts/ask.py --ask "..." --pg "postgresql://user:pass@host:5432/db" --model semantic/ops.yaml
   python3 scripts/ask.py --weknora --bootstrap > my-model.yaml   # catalog -> skeleton (no LLM)
   python3 scripts/ask.py --weknora --model semantic/weknora.yaml --check  # drift report
+  python3 scripts/ask.py --weknora --model new.yaml --calibers --against semantic/weknora.yaml  # caliber drift alarm (zero LLM)
+  python3 scripts/ask.py --weknora --ask "..." --ledger            # append the ask to the ledger (evidence)
+  python3 scripts/ask.py --weknora --ledger-print 5                 # the last 5 recorded asks
+  python3 scripts/ask.py --weknora --replay wl_ab12cd34             # re-run a recorded SQL now, numbers+calibers side by side
 """
-import argparse, datetime as dt, json, math, os, re, sqlite3, subprocess, sys
+import argparse, datetime as dt, hashlib, json, math, os, re, sqlite3, subprocess, sys
 
 import pgwire
-from model import catalog, run as model_run  # --bootstrap / --check (issue #15)
+from model import catalog, run as model_run, run_calibers  # --bootstrap / --check (#15); --calibers (#19)
 
 KIT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(KIT, "semantic", "semantic.db")
@@ -44,6 +48,18 @@ STR = {
         "init": "init → {db} · {symbol} · {n} bars · view v_metrics (calibers in semantic/models.yaml)",
         "retry_hint": "\n\nThe previously generated SQL failed to execute with error: {err}\nFix it and output again.",
         "footer": "---\n*engine: semantic-ask v0 · single-SELECT guard · self-heal retry · backend: {backend} · calibers versioned in semantic/models.yaml · {ts}*\n★ github.com/vicfei/dsh-WrenAI",
+        "ledger_line": "ledger: {id} -> {path} ({n} row(s) recorded{trunc}, verdict {verdict})",
+        "ledger_print_head": "## Ledger - last {n} of {total} recorded ask(s) ({path})",
+        "ledger_row": "{id} · {at} · {verdict} · Q: {q}",
+        "ledger_row_cals": "        calibers: {cals}",
+        "ledger_empty": "ledger is empty ({path})",
+        "replay_head": "## Replay {id} - recorded {at}, model {ds} - re-executed now",
+        "replay_shape": "shape: then {ra} rows x {ca} cols · now {rb} rows x {cb} cols",
+        "replay_cell": "row {r} · {col}: then {a} -> now {b}",
+        "replay_cal": "caliber {name}: then v{old} -> now v{new}",
+        "replay_verdict_moved": "RESULT: numbers moved ({cells} cell(s) changed{shape})",
+        "replay_verdict_cal": "RESULT: calibers changed ({cals} version(s) moved) - the same question now answers under different definitions",
+        "replay_verdict_stable": "RESULT: stable - same numbers, same caliber versions",
     },
     "zh": {
         "ask": "## 问数：{q}",
@@ -53,6 +69,18 @@ STR = {
         "init": "init → {db} · {symbol} · {n} bars · 视图 v_metrics（口径见 semantic/models.yaml）",
         "retry_hint": "\n\n上次生成的 SQL 执行报错：{err}\n请修正后重新输出。",
         "footer": "---\n*engine: semantic-ask v0 · 单条 SELECT 护栏 · 自愈重试 · 后端：{backend} · 口径版本随 semantic/models.yaml · {ts}*\n★ github.com/vicfei/dsh-WrenAI",
+        "ledger_line": "台账：{id} -> {path}（记录 {n} 行{trunc}，判定 {verdict}）",
+        "ledger_print_head": "## 台账 —— 最近 {n} / 共 {total} 条记录（{path}）",
+        "ledger_row": "{id} · {at} · {verdict} · 问：{q}",
+        "ledger_row_cals": "        口径：{cals}",
+        "ledger_empty": "台账为空（{path}）",
+        "replay_head": "## 重放 {id} —— 记录于 {at}，模型 {ds} —— 现在重新执行",
+        "replay_shape": "形态：当时 {ra} 行 x {ca} 列 · 现在 {rb} 行 x {cb} 列",
+        "replay_cell": "第 {r} 行 · {col}：当时 {a} -> 现在 {b}",
+        "replay_cal": "口径 {name}：当时 v{old} -> 现在 v{new}",
+        "replay_verdict_moved": "结论：数字变了（{cells} 个单元格变化{shape}）",
+        "replay_verdict_cal": "结论：口径变了（{cals} 个版本变动）—— 同一问题现在在不同定义下作答",
+        "replay_verdict_stable": "结论：稳定 —— 数字与口径版本都未变",
     },
 }
 
@@ -288,6 +316,76 @@ def fmt(v):
     return str(v)
 
 
+LEDGER_ROWS_CAP = 50   # a recorded ask keeps its first 50 rows; the count stays honest via n_rows/truncated
+
+
+def ledger_default_path(model_path):
+    """The ledger sits beside its model — one model, one append-only trail."""
+    return os.path.join(os.path.dirname(os.path.abspath(model_path or MODEL)), "ledger.ndjson")
+
+
+def ledger_append(path, entry):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def ledger_read(path):
+    if not os.path.exists(path):
+        return []
+    out = []
+    for line in open(path, encoding="utf-8"):
+        if line.strip():
+            out.append(json.loads(line))
+    return out
+
+
+def metrics_with_versions(model, names):
+    """The caliber versions an answer rode on — the ask-time view of #19's versioning."""
+    out = []
+    for m in names or []:
+        meta = (model.get("metrics") or {}).get(m) or (model.get("measures") or {}).get(m)
+        if meta:
+            out.append({"name": m, "version": str(meta.get("version", "1"))})
+    return out
+
+
+def replay(entry, model, pg):
+    """Re-execute a recorded SQL through the same guards and diff it against its
+    recording: cells that moved, caliber versions that moved. The M1 caliber-drift
+    alarm in live form — same question, then vs now, side by side."""
+    sql = scoped(entry["sql"], (model.get("tables") or None))
+    cols, rows = run_sql(pg, sql)
+    now_rows = [[fmt(v) for v in r] for r in rows[:LEDGER_ROWS_CAP]]
+    then_rows = entry.get("rows") or []
+    cell_diffs, shape_note = [], ""
+    if len(then_rows) != len(now_rows) or (then_rows and len(then_rows[0]) != len(now_rows[0])):
+        shape_note = " + " + t("replay_shape", ra=len(then_rows), ca=len(then_rows[0]) if then_rows else 0,
+                               rb=len(now_rows), cb=len(now_rows[0]) if now_rows else 0)
+    for ri, (a, b) in enumerate(zip(then_rows, now_rows)):
+        for ci, (va, vb) in enumerate(zip(a, b)):
+            if va != vb:
+                cell_diffs.append(t("replay_cell", r=ri + 1, col=(cols[ci] if ci < len(cols) else ci), a=va, b=vb))
+    then_v = {m["name"]: m["version"] for m in entry.get("metrics_used") or []}
+    now_v = {m["name"]: m["version"] for m in metrics_with_versions(model, then_v)}
+    cal_diffs = [t("replay_cal", name=n, old=then_v[n], new=now_v.get(n, "?")) for n in then_v if now_v.get(n) != then_v[n]]
+    lines = [t("replay_head", id=entry["id"], at=entry.get("at"), ds=entry.get("model", {}).get("dataset") or "?"), "",
+             "```sql\n" + sql + "\n```\n"]
+    for d in cell_diffs[:20]:
+        lines.append("- " + d)
+    if len(cell_diffs) > 20:
+        lines.append("- … " + str(len(cell_diffs) - 20))
+    for d in cal_diffs:
+        lines.append("- " + d)
+    if cal_diffs:
+        lines.append("\n" + t("replay_verdict_cal", cals=len(cal_diffs)))
+    elif cell_diffs or shape_note:
+        lines.append("\n" + t("replay_verdict_moved", cells=len(cell_diffs), shape=shape_note))
+    else:
+        lines.append("\n" + t("replay_verdict_stable"))
+    return "\n".join(lines)
+
+
 def main():
     global LANG
     ap = argparse.ArgumentParser()
@@ -301,6 +399,14 @@ def main():
     ap.add_argument("--weknora", action="store_true",
                     help="zero-config WeKnora preset: PG DSN from ~/WeKnora/.env (WREN_PG_DSN/WEKNORA_HOME override) + semantic/weknora.yaml")
     ap.add_argument("--model", metavar="PATH", help="semantic model YAML (default semantic/models.yaml; --weknora defaults to semantic/weknora.yaml)")
+    ap.add_argument("--calibers", action="store_true",
+                    help="deterministic caliber-drift alarm: diff this --model against --against OLD.yaml (zero LLM; exit 1 when a caliber changed without a version bump)")
+    ap.add_argument("--against", metavar="OLD.yaml", help="the old model for --calibers")
+    ap.add_argument("--ledger", nargs="?", const="", metavar="PATH",
+                    help="with --ask: append the ask as one ndjson event (default PATH sits beside the model)")
+    ap.add_argument("--ledger-print", nargs="?", const=10, metavar="N", type=int,
+                    help="print the last N recorded asks and exit")
+    ap.add_argument("--replay", metavar="ID", help="re-execute a recorded ask's SQL now, numbers and caliber versions side by side")
     ap.add_argument("--lang", choices=("en", "zh"), default="en",
                     help="output language (default en; zh is the fallback)")
     args = ap.parse_args()
@@ -318,6 +424,32 @@ def main():
     if args.bootstrap or args.check:
         model_run(args, model, model_path, pg)
         return
+    if args.calibers:
+        if not args.against:
+            sys.exit("--calibers needs --against OLD.yaml (the model to diff against)")
+        run_calibers(args, model, model_path)
+        return
+    if args.ledger_print is not None:
+        path = args.ledger or ledger_default_path(model_path)
+        entries = ledger_read(path)
+        if not entries:
+            print(t("ledger_empty", path=path)); return
+        n = min(args.ledger_print, len(entries))
+        print(t("ledger_print_head", n=n, total=len(entries), path=path))
+        for e in entries[-n:]:
+            cals = ", ".join("%s@v%s" % (m["name"], m["version"]) for m in e.get("metrics_used") or []) or "-"
+            print(t("ledger_row", id=e["id"], at=e.get("at"), verdict=e.get("verdict"), q=(e.get("question") or "")[:70]))
+            print(t("ledger_row_cals", cals=cals))
+        return
+    if args.replay:
+        path = args.ledger or ledger_default_path(model_path)
+        hit = [e for e in ledger_read(path) if e["id"] == args.replay]
+        if not hit:
+            sys.exit("replay: no ledger entry %s in %s" % (args.replay, path))
+        if not pg:
+            sys.exit("replay: re-execution needs the backend the SQL ran on (--pg DSN or --weknora)")
+        print(replay(hit[0], model, pg))
+        return
     if not args.ask:
         print(__doc__); sys.exit(2)
     dialect = "PostgreSQL" if pg else "SQLite"
@@ -329,21 +461,45 @@ def main():
         target = "the %s view %s" % (dialect, model.get("view") or model.get("table") or "v_metrics")
         catalog = json.dumps({k: {n: v.get("caliber", v.get("desc")) for n, v in model.get(k, {}).items()}
                               for k in ("dimensions", "measures", "metrics")}, ensure_ascii=False, indent=1)
+    t0 = dt.datetime.now()
     plan = llm(catalog, args.ask, dialect, target)
     tables = model.get("tables") or None
+    trail = {"verdict": "ok", "guard_rejection": None, "sql": None, "cols": [], "rows": []}
+
+    def _record(verdict):
+        """One append-only ledger event — the ask as evidence (#20). Failures
+        record too: the honest trail includes the rejections."""
+        path = args.ledger or ledger_default_path(model_path)
+        entry = {"id": "wl_" + hashlib.sha1((args.ask + dt.datetime.now().isoformat()).encode()).hexdigest()[:8],
+                 "at": dt.datetime.now().isoformat(timespec="seconds"), "question": args.ask,
+                 "model": {"path": model_path, "dataset": model.get("dataset"),
+                           "sha": hashlib.sha256(open(model_path, "rb").read()).hexdigest()[:16]},
+                 "backend": "pg" if pg else "sqlite", "sql": trail["sql"] or plan.get("sql", ""),
+                 "verdict": verdict, "guard_rejection": trail["guard_rejection"],
+                 "metrics_used": metrics_with_versions(model, plan.get("metrics_used", [])),
+                 "cols": trail["cols"], "n_rows": len(trail["rows"]),
+                 "rows": [[fmt(v) for v in r] for r in trail["rows"][:LEDGER_ROWS_CAP]],
+                 "truncated": len(trail["rows"]) > LEDGER_ROWS_CAP,
+                 "elapsed_s": round((dt.datetime.now() - t0).total_seconds(), 1)}
+        ledger_append(path, entry)
+        return entry, path
+
     try:
-        sql = scoped(plan["sql"], tables)
-        cols, rows = run_sql(pg, sql)
-    except (ValueError, sqlite3.Error, pgwire.PGError) as e:
-        # guard rejection or executor error → retry once with the reason fed back
-        plan = llm(catalog, args.ask + t("retry_hint", err=e), dialect, target)
         try:
             sql = scoped(plan["sql"], tables)
             cols, rows = run_sql(pg, sql)
         except (ValueError, sqlite3.Error, pgwire.PGError) as e:
-            # honest failure: show the SQL and the reason, no bare traceback
-            print(f"```sql\n{plan.get('sql', '')}\n```\n")
-            sys.exit(f"self-heal exhausted — {e}")
+            # guard rejection or executor error → retry once with the reason fed back
+            trail["verdict"], trail["guard_rejection"] = "self_healed", str(e)[:300]
+            plan = llm(catalog, args.ask + t("retry_hint", err=e), dialect, target)
+            sql = scoped(plan["sql"], tables)
+            cols, rows = run_sql(pg, sql)
+    except (ValueError, sqlite3.Error, pgwire.PGError) as e:
+        # honest failure: record it, show the SQL and the reason, no bare traceback
+        _record("failed")
+        print(f"```sql\n{plan.get('sql', '')}\n```\n")
+        sys.exit(f"self-heal exhausted — {e}")
+    trail["sql"], trail["cols"], trail["rows"] = sql, cols, rows
     print(t("ask", q=args.ask) + "\n")
     print(f"```sql\n{sql}\n```\n")
     print("| " + " | ".join(cols) + " |")
@@ -359,6 +515,10 @@ def main():
     if pg:
         backend = "WeKnora PostgreSQL via pgwire" if args.weknora else "PostgreSQL via pgwire (stdlib wire client)"
     print("\n" + t("footer", ts=dt.datetime.now().isoformat(timespec='seconds'), backend=backend))
+    if args.ledger is not None:
+        entry, path = _record(trail["verdict"])
+        print(t("ledger_line", id=entry["id"], path=path, n=entry["n_rows"],
+                trunc="…" if entry["truncated"] else "", verdict=entry["verdict"]))
 
 
 if __name__ == "__main__":
