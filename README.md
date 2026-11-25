@@ -90,7 +90,7 @@ dsh-wrenai --weknora --model my-model.yaml --check    # model vs live catalog, e
 |---|---|---|
 | Model sees | table schemas | **semantic catalog** — metrics with calibers, dimensions with business meaning |
 | Trust | hope | **calibers ride with results**: every result cites the metric definitions it used |
-| SQL safety | varies | **single-SELECT guard** + self-heal retry, deterministic execution |
+| SQL safety | varies | **single-SELECT guard + model-scope check** + self-heal retry, deterministic execution |
 | Backends | one, usually | **SQLite (stdlib) or PostgreSQL** — via a zero-dependency wire client |
 | Self-hosted | — | fully local (YAML models + your DB), no cloud service, no pip installs |
 
@@ -126,8 +126,10 @@ Output is English-first; `--lang zh` switches the user-facing labels to Chinese.
 semantic model (YAML: dimensions / measures / metrics + calibers)
         │  the LLM sees ONLY this catalog — never raw schemas
         ▼
-single SELECT ── deterministic guard (one statement, SELECT-only)
-        │           └─ executor error → self-heal retry with the error fed back
+single SELECT ── deterministic guard (one statement, SELECT-only; with a
+        │       tables model, table references must stay inside it — numbers
+        │       from unmodeled tables would ship without calibers)
+        │           └─ guard/executor error → self-heal retry with the reason fed back
         ▼
 numbers + calibers together  (a result without its definitions is a bug)
 ```

@@ -75,7 +75,7 @@ dsh-wrenai --weknora --model my-model.yaml --check    # 模型 vs 活目录，�
 |---|---|---|
 | 模型看到什么 | 表结构 | **语义目录**——带口径的指标、带业务含义的维度 |
 | 信任 | 靠信念 | **口径随行**：每个结果引用它实际使用的指标定义 |
-| SQL 安全 | 参差 | **单条 SELECT 护栏**+自愈重试，确定性执行 |
+| SQL 安全 | 参差 | **单条 SELECT 护栏+模型表域校验**+自愈重试，确定性执行 |
 | 后端 | 通常一个 | **SQLite（stdlib）或 PostgreSQL**——零依赖 wire 客户端 |
 | 自托管 | — | 完全本地（YAML 模型+你的库），无云服务，无 pip 安装 |
 
@@ -109,8 +109,9 @@ python3 scripts/ask.py --ask "average close and annualized volatility over the l
 语义模型（YAML：维度/度量/指标 + 口径）
         │  LLM 只看这个目录——绝不看裸表结构
         ▼
-单条 SELECT ── 确定性护栏（仅一条语句、仅 SELECT）
-        │           └─ 执行错误 → 错误回带自愈重试一次
+单条 SELECT ── 确定性护栏（仅一条语句、仅 SELECT；带 tables 的模型还要求
+        │      表引用不越出模型——未建模的表出数没有口径随行）
+        │           └─ 护栏/执行错误 → 原因回带自愈重试一次
         ▼
 数字 + 口径一起出（没有定义的数字即为 bug）
 ```

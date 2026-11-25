@@ -27,7 +27,9 @@ SQL builds from it). Data: family klines JSON or any tabular load you wire in.
 ## Discipline
 
 - Always quote the 口径 section with results — never numbers alone.
-- Single-SELECT guard is non-negotiable; report self-heal events honestly.
+- Single-SELECT guard is non-negotiable; with a tables model, SQL stays inside
+  the modeled tables (unmodeled = no calibers = refused); report self-heal
+  events honestly.
 - Metric definition changes are version bumps, not edits-in-place.
 - Skeletons from `--bootstrap` carry no calibers — curate before production;
   treat `--check` drift (dropped table/column, type change) as release-blocking.

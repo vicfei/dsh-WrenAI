@@ -56,6 +56,14 @@ catalog computation, so they live in the engine (zero LLM). Meaning stays human.
       stay green while their claims hold. First live run caught the preset's
       `messages.tenant_id` claim gone upstream (tenant scope rides
       `sessions.tenant_id`) — repaired in the same PR.
+- [x] W2.3 model-scope guard (#16) — with a tables model, SQL table references
+      must be a subset of it: best-effort FROM/JOIN extraction (comma lists,
+      aliases, schema-qualified and quoted names; set-returning functions and
+      subquery parens skipped), violation raises into the self-heal retry then
+      fails honestly. Two defense layers in the live smoke: catalog-discipline
+      (LLM refused an unmodeled table and returned an empty honest result) and
+      the deterministic guard (hermetic proof it fires on hallucinated names).
+      Governs the promise: unmodeled tables cannot ship numbers without calibers.
 
 ### M1 · Governance depth (week 2-3)
 - [ ] joins / multi-table models + metric versioning + caliber drift alarms
