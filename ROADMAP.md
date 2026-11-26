@@ -76,7 +76,7 @@ catalog computation, so they live in the engine (zero LLM). Meaning stays human.
       verdict, guard rejections, metric versions, result rows; failures record
       too) · result cache: cut without guilt
 
-### M2 · Compatibility & multi-DB (week 4-6)
+### M2 · Compatibility & multi-DB (week 4-6) — complete (2026-11-26, #22/#23/#24; 0.2.0)
 - [x] MDL-style model file compatibility layer (2026-11-26, #22): `--mdl
       file.mdl.json` imports in place — models->tables (types dropped, name-only
       drift), relationships->joins, metric formulas as calibers with the
