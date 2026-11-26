@@ -20,6 +20,7 @@ dsh-wrenai --weknora --ask "how many times was the test knowledge base queried i
 # caliber accountability: versioned definitions, recorded asks
 dsh-wrenai --model new.yaml --calibers --against old.yaml   # exit 1 on an unversioned caliber edit
 dsh-wrenai --pg "postgresql://u:p@host:5432/db" --mdl model.mdl.json --ask "…"  # WrenAI MDL file as the model, imported in place
+dsh-wrenai --duckdb mydata.duckdb --model my-model.yaml --ask "…"  # DuckDB backend (module or CLI; one backend per run)
 dsh-wrenai --weknora --ask "<question>" --ledger            # record the ask beside the model
 dsh-wrenai --weknora --replay wl_<id>                       # re-run a recorded SQL, then vs now
 ```

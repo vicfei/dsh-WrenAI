@@ -24,6 +24,7 @@ Usage:
   python3 scripts/ask.py --weknora --bootstrap > my-model.yaml   # catalog -> skeleton (no LLM)
   python3 scripts/ask.py --weknora --model semantic/weknora.yaml --check  # drift report
   python3 scripts/ask.py --pg "postgresql://…" --mdl wrenai.mdl.json --ask "…"  # WrenAI MDL file as the model, imported in place
+  python3 scripts/ask.py --duckdb --ask "…"                 # DuckDB backend (:memory:, or a .duckdb file path)
   python3 scripts/ask.py --weknora --model new.yaml --calibers --against semantic/weknora.yaml  # caliber drift alarm (zero LLM)
   python3 scripts/ask.py --weknora --ask "..." --ledger            # append the ask to the ledger (evidence)
   python3 scripts/ask.py --weknora --ledger-print 5                 # the last 5 recorded asks
@@ -62,6 +63,7 @@ STR = {
         "replay_verdict_moved": "RESULT: numbers moved ({cells} cell(s) changed{shape})",
         "replay_verdict_cal": "RESULT: calibers changed ({cals} version(s) moved) - the same question now answers under different definitions",
         "replay_verdict_stable": "RESULT: stable - same numbers, same caliber versions",
+        "no_duckdb": "guard: --duckdb needs the duckdb Python module (import duckdb) or the duckdb CLI on PATH - install either; the engine itself stays stdlib-only",
     },
     "zh": {
         "ask": "## 问数：{q}",
@@ -83,6 +85,7 @@ STR = {
         "replay_verdict_moved": "结论：数字变了（{cells} 个单元格变化{shape}）",
         "replay_verdict_cal": "结论：口径变了（{cals} 个版本变动）—— 同一问题现在在不同定义下作答",
         "replay_verdict_stable": "结论：稳定 —— 数字与口径版本都未变",
+        "no_duckdb": "护栏：--duckdb 需要 duckdb Python 模块（import duckdb）或 PATH 上的 duckdb CLI——任装其一；引擎本体保持零依赖",
     },
 }
 
@@ -287,15 +290,18 @@ def scoped(sql, tables):
     return sql
 
 
-def run_sql(dsn, sql):
+def run_sql(dsn, sql, duck=None):
     """Execute a guarded SELECT on the selected backend → (cols, rows).
-    Raises sqlite3.OperationalError / pgwire.PGError with the executor's message."""
+    dsn: PostgreSQL via pgwire · duck: a DuckDB path (or :memory:) · neither:
+    the SQLite demo. Raises the executor's error class with its message."""
     if dsn:
         con = pgwire.connect(dsn)
         try:
             return con.query(sql)
         finally:
             con.close()
+    if duck:
+        return duck_query(duck, sql)
     con = sqlite3.connect(DB)
     try:
         cur = con.execute(sql)
@@ -316,6 +322,38 @@ def fmt(v):
         except ValueError:
             return str(v)
     return str(v)
+
+
+def duck_query(path, sql):
+    """DuckDB execution (#23): the Python module if importable, else the CLI
+    binary on PATH (fed `.mode json` on stdin, JSON parsed back), else an
+    honest exit. DuckDB is an optional backend the caller brings — the engine
+    stays stdlib-only, same posture as the LLM key."""
+    try:
+        import duckdb
+    except ImportError:
+        import shutil
+        if not shutil.which("duckdb"):
+            sys.exit(t("no_duckdb"))
+        r = subprocess.run(["duckdb", path], input=".mode json\n" + sql + ";\n",
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            raise sqlite3.OperationalError(r.stderr.strip()[:300])
+        out = r.stdout.strip()
+        try:
+            rows = json.loads(out or "[]")
+        except ValueError:
+            raise sqlite3.OperationalError("duckdb CLI output was not JSON: %s" % out[:200])
+        return (list(rows[0].keys()) if rows else []), [tuple(r.values()) for r in rows]
+    con = duckdb.connect(path)
+    try:
+        cur = con.execute(sql)
+        rows = cur.fetchall()
+        return [d[0] for d in cur.description], rows
+    except Exception as e:  # duckdb's own exception tree -> the engine's one error class,
+        raise sqlite3.OperationalError(str(e)[:300])  # so the self-heal retry and honest failure fire
+    finally:
+        con.close()
 
 
 LEDGER_ROWS_CAP = 50   # a recorded ask keeps its first 50 rows; the count stays honest via n_rows/truncated
@@ -352,12 +390,12 @@ def metrics_with_versions(model, names):
     return out
 
 
-def replay(entry, model, pg):
+def replay(entry, model, pg, duck=None):
     """Re-execute a recorded SQL through the same guards and diff it against its
     recording: cells that moved, caliber versions that moved. The M1 caliber-drift
     alarm in live form — same question, then vs now, side by side."""
     sql = scoped(entry["sql"], (model.get("tables") or None))
-    cols, rows = run_sql(pg, sql)
+    cols, rows = run_sql(pg, sql, duck)
     now_rows = [[fmt(v) for v in r] for r in rows[:LEDGER_ROWS_CAP]]
     then_rows = entry.get("rows") or []
     cell_diffs, shape_note = [], ""
@@ -403,6 +441,8 @@ def main():
     ap.add_argument("--model", metavar="PATH", help="semantic model YAML (default semantic/models.yaml; --weknora defaults to semantic/weknora.yaml)")
     ap.add_argument("--mdl", metavar="PATH",
                     help="WrenAI MDL JSON file as the model source, imported in place (models->tables, relationships->joins, metric formulas as calibers; JSON only - the UI export format)")
+    ap.add_argument("--duckdb", nargs="?", const=":memory:", metavar="PATH",
+                    help="DuckDB execution backend: a database file or :memory: (the default when the flag has no value); needs the duckdb module or CLI - optional, the engine stays stdlib-only")
     ap.add_argument("--calibers", action="store_true",
                     help="deterministic caliber-drift alarm: diff this --model against --against OLD.yaml (zero LLM; exit 1 when a caliber changed without a version bump)")
     ap.add_argument("--against", metavar="OLD.yaml", help="the old model for --calibers")
@@ -418,6 +458,13 @@ def main():
     pg = args.pg
     if args.weknora:
         pg = pg or os.environ.get("WREN_PG_DSN") or weknora_dsn()
+    duck = None
+    if args.duckdb is not None:
+        if pg:
+            sys.exit("guard: one execution backend per run - --pg or --duckdb, not both")
+        if args.init:
+            sys.exit("guard: --init is the SQLite demo loader; --duckdb attaches to existing data")
+        duck = args.duckdb
     model_path = args.mdl or args.model or (os.path.join(KIT, "semantic", "weknora.yaml") if args.weknora else MODEL)
     if args.mdl:
         model = mdlkit.load_mdl(args.mdl, args.lang)
@@ -454,13 +501,13 @@ def main():
         hit = [e for e in ledger_read(path) if e["id"] == args.replay]
         if not hit:
             sys.exit("replay: no ledger entry %s in %s" % (args.replay, path))
-        if not pg:
-            sys.exit("replay: re-execution needs the backend the SQL ran on (--pg DSN or --weknora)")
-        print(replay(hit[0], model, pg))
+        if not (pg or duck):
+            sys.exit("replay: re-execution needs the backend the SQL ran on (--pg DSN, --weknora, or --duckdb)")
+        print(replay(hit[0], model, pg, duck))
         return
     if not args.ask:
         print(__doc__); sys.exit(2)
-    dialect = "PostgreSQL" if pg else "SQLite"
+    dialect = "DuckDB" if duck else ("PostgreSQL" if pg else "SQLite")
     if model.get("tables"):
         target = "the PostgreSQL tables and join paths listed in the catalog"
         catalog = json.dumps({k: model[k] for k in ("tables", "joins", "dimensions", "measures", "metrics") if model.get(k)},
@@ -482,7 +529,7 @@ def main():
                  "at": dt.datetime.now().isoformat(timespec="seconds"), "question": args.ask,
                  "model": {"path": model_path, "dataset": model.get("dataset"),
                            "sha": hashlib.sha256(open(model_path, "rb").read()).hexdigest()[:16]},
-                 "backend": "pg" if pg else "sqlite", "sql": trail["sql"] or plan.get("sql", ""),
+                 "backend": ("pg" if pg else "duckdb") if (pg or duck) else "sqlite", "sql": trail["sql"] or plan.get("sql", ""),
                  "verdict": verdict, "guard_rejection": trail["guard_rejection"],
                  "metrics_used": metrics_with_versions(model, plan.get("metrics_used", [])),
                  "cols": trail["cols"], "n_rows": len(trail["rows"]),
@@ -495,13 +542,13 @@ def main():
     try:
         try:
             sql = scoped(plan["sql"], tables)
-            cols, rows = run_sql(pg, sql)
+            cols, rows = run_sql(pg, sql, duck)
         except (ValueError, sqlite3.Error, pgwire.PGError) as e:
             # guard rejection or executor error → retry once with the reason fed back
             trail["verdict"], trail["guard_rejection"] = "self_healed", str(e)[:300]
             plan = llm(catalog, args.ask + t("retry_hint", err=e), dialect, target)
             sql = scoped(plan["sql"], tables)
-            cols, rows = run_sql(pg, sql)
+            cols, rows = run_sql(pg, sql, duck)
     except (ValueError, sqlite3.Error, pgwire.PGError) as e:
         # honest failure: record it, show the SQL and the reason, no bare traceback
         _record("failed")
@@ -520,7 +567,9 @@ def main():
         if meta:
             print(f"- **{m}**: {meta.get('caliber') or meta.get('desc')}")
     backend = "SQLite (stdlib)"
-    if pg:
+    if duck:
+        backend = "DuckDB (%s)" % (duck if duck != ":memory:" else ":memory:")
+    elif pg:
         backend = "WeKnora PostgreSQL via pgwire" if args.weknora else "PostgreSQL via pgwire (stdlib wire client)"
     print("\n" + t("footer", ts=dt.datetime.now().isoformat(timespec='seconds'), backend=backend))
     if args.ledger is not None:
