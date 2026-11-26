@@ -150,6 +150,18 @@ dsh-wrenai --weknora --replay wl_<id>                        # re-run a recorded
   live form — ask once, bump a definition, replay, and see the same question
   answering under a different caliber version.
 
+## Typed tools for the harness (`dsh plugin add dsh-wrenai`)
+
+The npm package registers four typed tools over the same engine
+(`lib/index.js`, the dsh-auto-ontology precedent):
+
+- **`wren_ask(question, pg|weknora|duckdb, model|mdl, ledger?, lang?)`** — one
+  ask through the semantic layer; the summary is the full engine output (SQL +
+  rows + the calibers section). Backends are exclusive by engine rule.
+- **`wren_check(model|mdl, pg|weknora)`** — the drift report.
+- **`wren_calibers(model|mdl, against)`** — the caliber-drift alarm.
+- **`wren_ledger(print N | replay id, …)`** — the ask ledger and re-execution.
+
 ## Why (NL2SQL plugins exist — what's missing is the semantic layer)
 
 | | raw NL2SQL plugins | **dsh-WrenAI** |

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // dsh-wrenai CLI shim — spawns the stdlib-only Python engine with args passed through.
-const { spawnSync } = require("child_process");
-const path = require("path");
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const engine = path.join(__dirname, "..", "scripts", "ask.py");
+const engine = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "ask.py");
 const args = process.argv.slice(2);
 const candidates = process.platform === "win32" ? ["python", "python3"] : ["python3", "python"];
 

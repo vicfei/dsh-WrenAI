@@ -13,6 +13,7 @@
   },
   "files": [
     "bin",
+    "lib",
     "scripts/*.py",
     "skills",
     "semantic/models.yaml",
@@ -50,5 +51,7 @@
   },
   "homepage": "https://github.com/vicfei/dsh-WrenAI#readme",
   "license": "MIT",
-  "author": "vicfei"
+  "author": "vicfei",
+  "type": "module",
+  "main": "./lib/index.js"
 }

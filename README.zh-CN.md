@@ -123,6 +123,16 @@ dsh-wrenai --weknora --replay wl_<id>                        # 现在重跑记�
   变了：变了的单元格、变了的口径版本。这就是活体形态的口径漂移告警——问一次，
   改一次定义，重放，看见同一问题在新口径版本下作答。
 
+## harness typed tools（`dsh plugin add dsh-wrenai`）
+
+npm 包在同一引擎上注册四个 typed tools（`lib/index.js`，dsh-auto-ontology 先例）：
+
+- **`wren_ask(question, pg|weknora|duckdb, model|mdl, ledger?, lang?)`** —— 经语义层
+  的一次问数；summary 即引擎完整输出（SQL + 行 + 口径段）。后端按引擎规则互斥。
+- **`wren_check(model|mdl, pg|weknora)`** —— 漂移对账报告。
+- **`wren_calibers(model|mdl, against)`** —— 口径漂移告警。
+- **`wren_ledger(print N | replay id, …)`** —— 问数台账与重放。
+
 ## 为什么（NL2SQL 插件已有——缺的是语义层）
 
 | | 裸 NL2SQL 插件 | **dsh-WrenAI** |
