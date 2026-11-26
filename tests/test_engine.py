@@ -247,6 +247,50 @@ check("replay caliber diff verdict", "calibers changed" in out and "m1: then v1 
 check("replay stable verdict", "stable" in out2)
 
 
+
+# ── M2.1: MDL compatibility (#22) ────────────────────────────────────────────
+import mdl as mdlkit
+
+_mdl = {"source": "pg", "models": [
+    {"name": "orders", "columns": [{"name": "id", "type": "varchar"}, {"name": "total", "type": "double"},
+                                   {"name": "margin", "type": "double", "expression": "total - cost"}],
+     "primaryKeyName": "id"},
+    {"name": "customers", "columns": [{"name": "id", "type": "varchar"}, {"name": "name", "type": "varchar"}]}],
+    "relationships": [{"name": "oc", "models": ["orders", "customers"],
+                       "condition": "{orders}.customer_id = {customers}.id"}],
+    "metrics": [{"name": "revenue", "type": "number", "baseObject": "orders", "formula": "sum({orders}.total)"}],
+    "views": [{"name": "v"}]}
+_mdlp = os.path.join(tempfile.mkdtemp(), "m.mdl.json")
+open(_mdlp, "w").write(__import__("json").dumps(_mdl))
+_im = mdlkit.load_mdl(_mdlp)
+check("mdl maps models->tables with keys", set(_im["tables"]) == {"orders", "customers"} and _im["tables"]["orders"]["key"] == "id"
+      and _im["tables"]["customers"]["key"] == "id")  # primaryKeyName absent -> id
+check("mdl drops types (name-only drift) and skips calculated cols",
+      _im["tables"]["orders"]["cols"] == "id, total" and "margin" not in _im["tables"]["orders"]["cols"])
+check("mdl calculated column rides as catalog entry with expression",
+      "total - cost" in _im["dimensions"]["margin"]["desc"] and "orders" in _im["dimensions"]["margin"]["desc"])
+check("mdl relationship -> join with {braces} stripped",
+      _im["joins"]["oc"] == "orders.customer_id = customers.id")
+check("mdl metric formula is the caliber, with disclosure",
+      _im["metrics"]["revenue"]["caliber"].startswith("MDL metric") and "sum({orders}.total)" in _im["metrics"]["revenue"]["caliber"])
+check("mdl disclosure says no human prose rides", "no human caliber prose" in _im["description"])
+check("mdl summary counts + views skipped", mdlkit.summary(_im).count("1 view(s) skipped") == 1 and "2 model(s)" in mdlkit.summary(_im))
+check("mdl feeds caliber_index (version defaults 1)", modelkit.caliber_index(_im)["revenue"]["version"] == "1")
+_badp = os.path.join(tempfile.mkdtemp(), "bad.mdl.yaml")
+open(_badp, "w").write("models: []\n")
+try:
+    mdlkit.load_mdl(_badp); ok = False
+except SystemExit as e:
+    ok = "JSON" in str(e)
+check("mdl refuses non-JSON honestly", ok)
+_nop = os.path.join(tempfile.mkdtemp(), "empty.mdl.json")
+open(_nop, "w").write('{"source": "pg", "models": []}')
+try:
+    mdlkit.load_mdl(_nop); ok2 = False
+except SystemExit as e:
+    ok2 = "models" in str(e)
+check("mdl refuses no-models manifest honestly", ok2)
+
 print("result:", "GREEN" if not FAILS else "RED (%d)" % len(FAILS))
 sys.exit(1 if FAILS else 0)
 

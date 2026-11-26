@@ -23,6 +23,7 @@ Usage:
   python3 scripts/ask.py --ask "..." --pg "postgresql://user:pass@host:5432/db" --model semantic/ops.yaml
   python3 scripts/ask.py --weknora --bootstrap > my-model.yaml   # catalog -> skeleton (no LLM)
   python3 scripts/ask.py --weknora --model semantic/weknora.yaml --check  # drift report
+  python3 scripts/ask.py --pg "postgresql://…" --mdl wrenai.mdl.json --ask "…"  # WrenAI MDL file as the model, imported in place
   python3 scripts/ask.py --weknora --model new.yaml --calibers --against semantic/weknora.yaml  # caliber drift alarm (zero LLM)
   python3 scripts/ask.py --weknora --ask "..." --ledger            # append the ask to the ledger (evidence)
   python3 scripts/ask.py --weknora --ledger-print 5                 # the last 5 recorded asks
@@ -31,6 +32,7 @@ Usage:
 import argparse, datetime as dt, hashlib, json, math, os, re, sqlite3, subprocess, sys
 
 import pgwire
+import mdl as mdlkit  # --mdl: WrenAI-ecosystem model files (#22)
 from model import catalog, run as model_run, run_calibers  # --bootstrap / --check (#15); --calibers (#19)
 
 KIT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -399,6 +401,8 @@ def main():
     ap.add_argument("--weknora", action="store_true",
                     help="zero-config WeKnora preset: PG DSN from ~/WeKnora/.env (WREN_PG_DSN/WEKNORA_HOME override) + semantic/weknora.yaml")
     ap.add_argument("--model", metavar="PATH", help="semantic model YAML (default semantic/models.yaml; --weknora defaults to semantic/weknora.yaml)")
+    ap.add_argument("--mdl", metavar="PATH",
+                    help="WrenAI MDL JSON file as the model source, imported in place (models->tables, relationships->joins, metric formulas as calibers; JSON only - the UI export format)")
     ap.add_argument("--calibers", action="store_true",
                     help="deterministic caliber-drift alarm: diff this --model against --against OLD.yaml (zero LLM; exit 1 when a caliber changed without a version bump)")
     ap.add_argument("--against", metavar="OLD.yaml", help="the old model for --calibers")
@@ -414,8 +418,12 @@ def main():
     pg = args.pg
     if args.weknora:
         pg = pg or os.environ.get("WREN_PG_DSN") or weknora_dsn()
-    model_path = args.model or (os.path.join(KIT, "semantic", "weknora.yaml") if args.weknora else MODEL)
-    model = load_yaml(model_path)
+    model_path = args.mdl or args.model or (os.path.join(KIT, "semantic", "weknora.yaml") if args.weknora else MODEL)
+    if args.mdl:
+        model = mdlkit.load_mdl(args.mdl, args.lang)
+        sys.stderr.write(mdlkit.summary(model) + "\n")
+    else:
+        model = load_yaml(model_path)
     if args.init:
         if pg:
             sys.exit("guard: --init is the SQLite demo loader; --pg backends attach to existing data")

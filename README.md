@@ -84,6 +84,27 @@ dsh-wrenai --weknora --model my-model.yaml --check    # model vs live catalog, e
   `messages.tenant_id`, which upstream had removed — the repair rode in the
   same change.
 
+## Bring your WrenAI models: `--mdl` imports MDL files in place
+
+A WrenAI-ecosystem model file is a valid model source — no conversion step:
+
+```bash
+dsh-wrenai --pg "postgresql://u:p@host:5432/db" --mdl my-model.mdl.json --ask "..."
+dsh-wrenai --pg "postgresql://…" --mdl my-model.mdl.json --check   # and drift-account it
+```
+
+`models[]` → tables (key from `primaryKeyName`), `relationships[]` → joins
+(`{orders}.x = {customers}.y` conditions with braces stripped), `metrics[]` →
+metrics whose caliber is the MDL formula — with the hard disclosure that **no
+human caliber prose rides** (an MDL carries formulas, not calibers).
+Calculated columns are not physical columns, so they do not land in the cols
+line (they would read as drift); they ride as catalog entries carrying their
+expression. Column types are dropped on import — MDL types are loose
+declarations and the drift check compares catalog types, so keeping them would
+paint every import red on day one. Views are skipped with a disclosure. JSON
+MDL only: that is the interchange the WrenAI UI exports. Everything downstream
+works unchanged — scope guard, `--check`, `--calibers`, `--ledger`, `--replay`.
+
 ## Caliber accountability: versioned definitions, recorded asks
 
 The discipline says metric definition changes are version bumps, not

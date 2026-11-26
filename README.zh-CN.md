@@ -69,6 +69,23 @@ dsh-wrenai --weknora --model my-model.yaml --check    # 模型 vs 活目录，�
   未建模表只算提示：刻意裁剪的部分模型只要声明仍成立就保持绿。dev 机首跑就抓到本仓
   自带 preset 声明的 `messages.tenant_id` 已被上游删除——修复随同一变更合入。
 
+## 直接吃 WrenAI 生态模型：`--mdl` 原地导入
+
+WrenAI 生态的模型文件本身就是合法模型源——不需要转换步骤：
+
+```bash
+dsh-wrenai --pg "postgresql://u:p@host:5432/db" --mdl my-model.mdl.json --ask "…"
+dsh-wrenai --pg "postgresql://…" --mdl my-model.mdl.json --check   # 还能对活目录做漂移对账
+```
+
+`models[]` → 表（key 取 `primaryKeyName`）、`relationships[]` → join
+（`{orders}.x = {customers}.y` 条件去掉花括号）、`metrics[]` → 指标，口径即 MDL
+公式——并硬性披露**不带人工口径叙述**（MDL 载的是公式，不是口径）。计算列不是
+物理列，不进 cols 行（否则会被当成漂移），改以携表达式的目录条目随行；导入时
+列类型剥掉——MDL 类型是宽松声明，漂移对账比的是目录类型，留着会让每次导入
+开箱即红；views 跳过并披露。仅支持 JSON MDL：那是 WrenAI UI 的导出交换格式。
+下游全部照常——作用域守卫、`--check`、`--calibers`、`--ledger`、`--replay`。
+
 ## 口径可问责：定义带版本，问数留台账
 
 纪律写着"指标定义的改动是升版本，不是原地改"——W3 把它变成机制，并让每次问数成为
