@@ -77,7 +77,13 @@ catalog computation, so they live in the engine (zero LLM). Meaning stays human.
       too) · result cache: cut without guilt
 
 ### M2 · Compatibility & multi-DB (week 4-6)
-- [ ] MDL-style model file compatibility layer (WrenAI ecosystem models import directly)
+- [x] MDL-style model file compatibility layer (2026-11-26, #22): `--mdl
+      file.mdl.json` imports in place — models->tables (types dropped, name-only
+      drift), relationships->joins, metric formulas as calibers with the
+      no-prose disclosure, calculated columns as catalog entries, views skipped;
+      scope guard / --check / --calibers / --ledger / --replay all work on an
+      import. Live-smoked on the dev WeKnora (--check clean, --ask over the
+      relationship join, ledger recorded)
 - [ ] DuckDB execution backend + typed tools for the harness plugin surface
 
 ## Discipline

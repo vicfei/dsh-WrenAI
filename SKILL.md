@@ -21,6 +21,8 @@ python3 $KIT/scripts/ask.py --weknora --bootstrap > my-model.yaml
 python3 $KIT/scripts/ask.py --weknora --model my-model.yaml --check   # exit 1 on drift
 # caliber accountability: versioned definitions, recorded asks
 python3 $KIT/scripts/ask.py --model new.yaml --calibers --against old.yaml  # exit 1 on an unversioned caliber edit
+python3 $KIT/scripts/ask.py --pg "postgresql://u:p@host:5432/db" --mdl model.mdl.json --ask "…"  # WrenAI MDL file as the model, imported in place
+python3 $KIT/scripts/ask.py --pg "postgresql://u:p@host:5432/db" --mdl model.mdl.json --ask "…"  # WrenAI MDL file as the model, imported in place
 python3 $KIT/scripts/ask.py --weknora --ask "<question>" --ledger           # record the ask beside the model
 python3 $KIT/scripts/ask.py --weknora --replay wl_<id>                      # re-run a recorded SQL, then vs now
 ```
