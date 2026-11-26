@@ -84,6 +84,23 @@ dsh-wrenai --weknora --model my-model.yaml --check    # model vs live catalog, e
   `messages.tenant_id`, which upstream had removed — the repair rode in the
   same change.
 
+## DuckDB backend: `--duckdb`
+
+The third execution backend, same guards, same calibers-ride output:
+
+```bash
+dsh-wrenai --duckdb mydata.duckdb --model my-model.yaml --ask "..."
+dsh-wrenai --duckdb --model my-model.yaml --ask "..."        # :memory:, load parquet/csv in SQL
+```
+
+One backend per run (`--pg` or `--duckdb`, not both). Resolution is honest at
+each step: the `duckdb` **Python module** if importable, else the `duckdb`
+**CLI binary** on PATH, else an exit naming both options — DuckDB is an
+optional backend the caller brings; the engine stays stdlib-only (same posture
+as the LLM key). DuckDB's own exceptions fold into the engine's error class, so
+the self-heal retry and honest-failure path fire unchanged; `--ledger` records
+`backend: "duckdb"`, `--replay` re-runs on whatever backend is current.
+
 ## Bring your WrenAI models: `--mdl` imports MDL files in place
 
 A WrenAI-ecosystem model file is a valid model source — no conversion step:

@@ -69,6 +69,21 @@ dsh-wrenai --weknora --model my-model.yaml --check    # 模型 vs 活目录，�
   未建模表只算提示：刻意裁剪的部分模型只要声明仍成立就保持绿。dev 机首跑就抓到本仓
   自带 preset 声明的 `messages.tenant_id` 已被上游删除——修复随同一变更合入。
 
+## DuckDB 后端：`--duckdb`
+
+第三个执行后端，同样的护栏、同样的口径随行输出：
+
+```bash
+dsh-wrenai --duckdb mydata.duckdb --model my-model.yaml --ask "…"
+dsh-wrenai --duckdb --model my-model.yaml --ask "…"        # :memory:，在 SQL 里读 parquet/csv
+```
+
+一次运行一个后端（`--pg` 与 `--duckdb` 二选一）。解析顺序每步都诚实：可 import 的
+`duckdb` **Python 模块** → PATH 上的 `duckdb` **CLI** → 都没有就退出并点名两条路——
+DuckDB 是调用方自带的可选后端，引擎本体保持零依赖（与 LLM key 同一姿态）。
+DuckDB 自身异常折进引擎的统一错误类，自愈重试与诚实失败路径照常；`--ledger` 记
+`backend: "duckdb"`，`--replay` 对当前后端重跑。
+
 ## 直接吃 WrenAI 生态模型：`--mdl` 原地导入
 
 WrenAI 生态的模型文件本身就是合法模型源——不需要转换步骤：

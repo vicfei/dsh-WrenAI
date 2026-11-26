@@ -84,7 +84,10 @@ catalog computation, so they live in the engine (zero LLM). Meaning stays human.
       scope guard / --check / --calibers / --ledger / --replay all work on an
       import. Live-smoked on the dev WeKnora (--check clean, --ask over the
       relationship join, ledger recorded)
-- [ ] DuckDB execution backend + typed tools for the harness plugin surface
+- [x] DuckDB execution backend (2026-11-26, #23): `--duckdb [path|:memory:]`,
+      module-then-CLI-then-honest-exit; duckdb exceptions fold into the engine's
+      error class so self-heal fires; ledger records the backend. Live-smoked
+      (30-day table, ask + replay stable). typed tools: #24
 
 ## Discipline
 - Calibers ride with results — never numbers alone; single-SELECT guard is

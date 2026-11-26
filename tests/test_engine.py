@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hermetic engine tests — no LLM, no network, no database server.
 Run: python3 tests/test_engine.py   (exits non-zero on any FAIL)"""
-import os, sys, tempfile
+import os, sqlite3, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -234,7 +234,7 @@ con.execute("CREATE TABLE t (k TEXT, n INT)")
 con.executemany("INSERT INTO t VALUES (?,?)", [("a", 1), ("b", 2)])
 con.commit()
 _real_run = ask.run_sql
-ask.run_sql = lambda dsn, sql: (["k", "n"], con.execute(sql).fetchall())
+ask.run_sql = lambda dsn, sql, duck=None: (["k", "n"], con.execute(sql).fetchall())
 entry = {"id": "wl_test0001", "at": "2026-11-26T00:00:00", "sql": "SELECT k, n FROM t ORDER BY k",
          "rows": [["a", "1"], ["b", "5"]], "model": {"dataset": "d"},
          "metrics_used": [{"name": "m1", "version": "1"}]}
@@ -290,6 +290,31 @@ try:
 except SystemExit as e:
     ok2 = "models" in str(e)
 check("mdl refuses no-models manifest honestly", ok2)
+
+
+# ── M2.2: DuckDB backend (#23) — availability-gated, honest SKIP ─────────────
+try:
+    import duckdb as _dd
+    _dd_ok = "module"
+except ImportError:
+    import shutil as _sh
+    _dd_ok = "cli" if _sh.which("duckdb") else None
+if not _dd_ok:
+    print("SKIP duckdb checks (neither the module nor the CLI is installed - CI stays green without it)")
+else:
+    _ddb = os.path.join(tempfile.mkdtemp(), "smoke.duckdb")
+    if _dd_ok == "module":
+        _c = _dd.connect(_ddb)
+        _c.execute("CREATE TABLE t AS SELECT range AS d, range * 2 AS v FROM range(5)")
+        _c.close()
+    cols, rows = ask.duck_query(_ddb, "SELECT d, v FROM t ORDER BY d")
+    check("duckdb module query", cols == ["d", "v"] and rows == [(0, 0), (1, 2), (2, 4), (3, 6), (4, 8)])
+    try:
+        ask.duck_query(_ddb, "SELECT * FROM nope")
+        ok = False
+    except sqlite3.OperationalError:
+        ok = True  # duckdb's own exception tree folds into the engine's error class -> self-heal fires
+    check("duckdb errors fold into the self-heal path", ok)
 
 print("result:", "GREEN" if not FAILS else "RED (%d)" % len(FAILS))
 sys.exit(1 if FAILS else 0)
