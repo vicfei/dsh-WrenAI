@@ -1,7 +1,7 @@
 {
   "name": "dsh-wrenai",
-  "version": "0.1.1",
-  "description": "Self-hosted semantic layer for DeepSeek Harness — natural-language data questions where metric calibers ride with every result. Single-SELECT guard, self-heal SQL, SQLite/PostgreSQL execution (zero-dependency wire client, SCRAM-SHA-256 verified), and a zero-config --weknora bridge: ask your WeKnora deployment anything.",
+  "version": "0.2.0",
+  "description": "Self-hosted semantic layer for DeepSeek Harness — natural-language data questions where metric calibers ride with every result. Single-SELECT guard, self-heal SQL; SQLite / PostgreSQL (zero-dependency wire client) / DuckDB execution; a zero-config --weknora bridge; model lifecycle (--bootstrap / --check); caliber accountability (versioned calibers, --calibers drift alarm, --ledger / --replay ask evidence); WrenAI MDL files import in place; typed tools for the harness.",
   "bin": {
     "dsh-wrenai": "bin/dsh-wrenai.js"
   },
