@@ -12,5 +12,22 @@ jobs:
         run: python3 tests/test_engine.py
       - name: CLI shim smoke
         run: node bin/dsh-wrenai.js --help
+      - name: typed tools register (hermetic, no engine call)
+        run: |
+          node --input-type=module <<'EOF'
+          const mod = await import("./lib/index.js");
+          const tools = new Map();
+          await mod.apply({ tools: { register: (t) => tools.set(t.name, t) } });
+          const names = [...tools.keys()].sort().join(",");
+          if (names !== "wren_ask,wren_calibers,wren_check,wren_ledger") throw new Error("registered: " + names);
+          const ask = tools.get("wren_ask");
+          if (!ask.parameters.required.includes("question")) throw new Error("required: " + JSON.stringify(ask.parameters.required));
+          for (const args of [{}, { pg: "a", weknora: true, question: "q" }]) {
+            try { ask.execute(args); throw new Error("NO THROW " + JSON.stringify(args)); }
+            catch (e) { if (!/question|backend/.test(e.message)) throw e; }
+          }
+          console.log("typed tools:", names, "| required", JSON.stringify(ask.parameters.required), "| error paths throw");
+          EOF
+
       - name: package dry-run
         run: npm publish --dry-run

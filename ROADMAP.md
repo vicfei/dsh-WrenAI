@@ -87,7 +87,14 @@ catalog computation, so they live in the engine (zero LLM). Meaning stays human.
 - [x] DuckDB execution backend (2026-11-26, #23): `--duckdb [path|:memory:]`,
       module-then-CLI-then-honest-exit; duckdb exceptions fold into the engine's
       error class so self-heal fires; ledger records the backend. Live-smoked
-      (30-day table, ask + replay stable). typed tools: #24
+      (30-day table, ask + replay stable).
+- [x] typed tools for the harness plugin surface (2026-11-26, #24):
+      `lib/index.js` registers wren_ask / wren_check / wren_calibers /
+      wren_ledger (JSON-schema parameters, backend exclusivity enforced
+      tool-side too, engine spawn with honest exit surfacing); `type: module`
+      + ESM bin; files whitelist gains lib; CI gains a hermetic registration
+      step. Live-checked: wren_calibers through the tool returns the DRIFT
+      verdict with exit 1
 
 ## Discipline
 - Calibers ride with results — never numbers alone; single-SELECT guard is
